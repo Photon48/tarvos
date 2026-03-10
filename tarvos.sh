@@ -115,6 +115,28 @@ EOF
     exit 0
 }
 
+usage_list() {
+    cat <<EOF
+Usage: tarvos list
+
+Show all sessions in an interactive TUI.
+
+Navigation:
+  ↑ / ↓    Move selection
+  Enter     Open actions menu for selected session
+  r         Refresh session list
+  q         Quit
+
+Actions (context-aware per session status):
+  running     → Attach, Stop
+  stopped     → Resume, Reject
+  done        → Accept, Reject
+  initialized → Start, Start (bg), Reject
+  failed      → Reject
+EOF
+    exit 0
+}
+
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
@@ -126,6 +148,7 @@ Commands:
   begin <name> --bg               Run session in background (detached)
   attach <name>                   Follow live output of a background session
   stop <name>                     Stop a running background session
+  list                            Show all sessions (interactive TUI)
 
 Run \`tarvos <command> --help\` for command-specific options.
 EOF
@@ -553,6 +576,26 @@ cmd_stop() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# tarvos list — interactive session list TUI
+# ──────────────────────────────────────────────────────────────
+cmd_list() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_list ;;
+            *)
+                echo "tarvos list: unexpected argument: $1" >&2
+                usage_list
+                ;;
+        esac
+    done
+
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/list-tui.sh"
+
+    list_tui_run "${SCRIPT_DIR}/tarvos.sh"
+}
+
+# ──────────────────────────────────────────────────────────────
 # Clean shutdown: kill claude, restore terminal, exit
 # CURRENT_SESSION_NAME is set by cmd_begin before run_agent_loop
 # ──────────────────────────────────────────────────────────────
@@ -882,6 +925,7 @@ main() {
         begin)  cmd_begin "$@" ;;
         attach) cmd_attach "$@" ;;
         stop)   cmd_stop "$@" ;;
+        list)   cmd_list "$@" ;;
         -h|--help) usage_root ;;
         *)
             echo "tarvos: unknown command: ${cmd}" >&2
