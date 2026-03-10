@@ -1,111 +1,80 @@
 #!/usr/bin/env bash
-# list-tui.sh - Interactive session list TUI for Tarvos
-# Reuses color/TUI patterns from log-manager.sh
+# list-tui.sh — Session list TUI for Tarvos
+# Rebuilt from scratch using tui-core.sh primitives.
+# Provides a polished, full-screen session browser with action overlay,
+# animated spinners, auto-refresh, and all key bindings from the PRD.
 
-# ──────────────────────────────────────────────────────────────
-# Colors (duplicated here so list-tui.sh can be sourced independently)
-# ──────────────────────────────────────────────────────────────
-_L_RED='\033[0;31m'
-_L_GREEN='\033[0;32m'
-_L_YELLOW='\033[1;33m'
-_L_BLUE='\033[0;34m'
-_L_CYAN='\033[0;36m'
-_L_WHITE='\033[1;37m'
-_L_BOLD='\033[1m'
-_L_DIM='\033[2m'
-_L_RESET='\033[0m'
-_L_BG_HEADER='\033[48;5;24m'
-_L_BG_SEL='\033[48;5;237m'
+# Source tui-core.sh (find it relative to this file)
+_LIST_TUI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tui-core.sh
+source "${_LIST_TUI_DIR}/tui-core.sh"
 
 # ──────────────────────────────────────────────────────────────
 # Internal state
 # ──────────────────────────────────────────────────────────────
-_LIST_NAMES=()       # session names in display order
-_LIST_ROWS=()        # rendered row strings (parallel to _LIST_NAMES)
-_LIST_STATUSES=()    # status per session (parallel)
-_LIST_SEL=0          # currently selected index (0-based)
-_LIST_COLS=80
-_LIST_ROWS_TERM=24
-_LIST_TUI_ACTIVE=0
+_LIST_NAMES=()        # session names in display order
+_LIST_STATUSES=()     # status per session (parallel)
+_LIST_BRANCHES=()     # branch per session (parallel)
+_LIST_ACTIVITIES=()   # last_activity ISO8601 per session (parallel)
+_LIST_SEL=0           # currently selected index (0-based)
+_LIST_TUI_ACTIVE=0    # 1 when alternate screen is active
+_LIST_SPIN_IDX=()     # spinner frame index per session (for animated running indicator)
+_LIST_RENDER_TICK=0   # global render tick counter
 
 # ──────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────
 
-# Move cursor to row,col (1-based)
-_lmv() { tput cup "$(($1 - 1))" "$(($2 - 1))" 2>/dev/null; }
-
-# Pad/truncate string to exact width
-_lpad() {
-    local str="$1"
-    local width="$2"
-    printf "%-${width}s" "${str:0:${width}}"
-}
-
 # Format a last_activity ISO8601 timestamp as "Xm ago", "Xh ago", etc.
 _format_activity() {
     local ts="$1"
-    if [[ -z "$ts" ]] || [[ "$ts" == "null" ]]; then
-        echo "—"
+    if [[ -z "$ts" ]] || [[ "$ts" == "null" ]] || [[ "$ts" == "" ]]; then
+        printf '—'
         return
     fi
 
     local ts_epoch now_epoch diff
-    # macOS / BSD date
+    # Try macOS/BSD date first, then GNU date (handles %z timezone correctly)
     if ts_epoch=$(date -jf "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null); then
         :
+    elif ts_epoch=$(date -jf "%Y-%m-%dT%H:%M:%S%z" "$ts" +%s 2>/dev/null); then
+        :
     else
-        # GNU date fallback
-        ts_epoch=$(date -d "$ts" +%s 2>/dev/null) || { echo "—"; return; }
+        ts_epoch=$(date -d "$ts" +%s 2>/dev/null) || { printf '—'; return; }
     fi
     now_epoch=$(date +%s)
     diff=$(( now_epoch - ts_epoch ))
 
     if (( diff < 60 )); then
-        echo "${diff}s ago"
+        printf '%ds ago' "$diff"
     elif (( diff < 3600 )); then
-        echo "$(( diff / 60 ))m ago"
+        printf '%dm ago' "$(( diff / 60 ))"
     elif (( diff < 86400 )); then
-        echo "$(( diff / 3600 ))h ago"
+        printf '%dh ago' "$(( diff / 3600 ))"
     else
-        echo "$(( diff / 86400 ))d ago"
+        printf '%dd ago' "$(( diff / 86400 ))"
     fi
 }
 
-# Status color
-_status_color() {
-    local status="$1"
-    case "$status" in
-        running)     echo "$_L_GREEN" ;;
-        done)        echo "$_L_CYAN" ;;
-        stopped)     echo "$_L_YELLOW" ;;
-        initialized) echo "$_L_DIM" ;;
-        failed)      echo "$_L_RED" ;;
-        *)           echo "$_L_RESET" ;;
-    esac
-}
-
 # ──────────────────────────────────────────────────────────────
-# Load session data from registry + session state files
-# Populates _LIST_NAMES, _LIST_STATUSES, and raw data arrays
+# Load session data from state files
+# Populates _LIST_NAMES, _LIST_STATUSES, _LIST_BRANCHES, _LIST_ACTIVITIES
 # ──────────────────────────────────────────────────────────────
-
-# Per-session data (parallel arrays)
-_LIST_BRANCHES=()
-_LIST_ACTIVITIES=()
-
 _list_load_sessions() {
+    local prev_count=${#_LIST_NAMES[@]}
+
     _LIST_NAMES=()
     _LIST_STATUSES=()
     _LIST_BRANCHES=()
     _LIST_ACTIVITIES=()
 
-    if [[ ! -d "${SESSIONS_DIR:-.tarvos/sessions}" ]]; then
+    local sessions_dir="${SESSIONS_DIR:-.tarvos/sessions}"
+    if [[ ! -d "$sessions_dir" ]]; then
         return 0
     fi
 
     local state_file name status branch last_activity
-    for state_file in "${SESSIONS_DIR:-.tarvos/sessions}"/*/state.json; do
+    for state_file in "${sessions_dir}"/*/state.json; do
         [[ -f "$state_file" ]] || continue
         name=$(jq -r '.name // ""' "$state_file" 2>/dev/null)
         [[ -z "$name" ]] && continue
@@ -118,195 +87,295 @@ _list_load_sessions() {
         _LIST_BRANCHES+=("$branch")
         _LIST_ACTIVITIES+=("$last_activity")
     done
+
+    # Re-initialize spinner indices if session count changed
+    local new_count=${#_LIST_NAMES[@]}
+    if (( new_count != prev_count )); then
+        _LIST_SPIN_IDX=()
+        local i
+        for (( i=0; i<new_count; i++ )); do
+            _LIST_SPIN_IDX+=( $(( RANDOM % 10 )) )
+        done
+    fi
 }
 
 # ──────────────────────────────────────────────────────────────
 # Render the full TUI screen
 # ──────────────────────────────────────────────────────────────
 _list_render() {
-    _LIST_COLS=$(tput cols 2>/dev/null || echo 80)
-    _LIST_ROWS_TERM=$(tput lines 2>/dev/null || echo 24)
-
-    local w=$_LIST_COLS
+    _tc_update_dimensions
+    local w="$TC_COLS"
+    local h="$TC_ROWS"
     local count=${#_LIST_NAMES[@]}
 
-    # Column widths
+    # Advance render tick + spinner indices for running sessions
+    (( _LIST_RENDER_TICK++ )) || true
+    local i
+    for (( i=0; i<count; i++ )); do
+        if [[ "${_LIST_STATUSES[$i]}" == "running" ]]; then
+            _LIST_SPIN_IDX[$i]=$(( (_LIST_SPIN_IDX[$i] + 1) % 10 ))
+        fi
+    done
+
+    # ── Header (rows 0-1) ──
+    tc_draw_header
+
+    # ── Sessions panel ──
+    # Panel starts at row 3, leaves 1 row gap after header
+    local panel_top=3
+    # Height: terminal height minus header(2) minus gap(1) minus footer(1)
+    local panel_height=$(( h - panel_top - 1 ))
+    [[ $panel_height -lt 4 ]] && panel_height=4
+    local panel_width=$(( w ))
+
+    # Build sessions panel title with count
+    local panel_title
+    if (( count == 1 )); then
+        panel_title="Sessions ── 1 session"
+    else
+        panel_title="Sessions ── ${count} sessions"
+    fi
+
+    # Top border
+    tput cup "$panel_top" 0 2>/dev/null
+    tc_draw_box_top "$panel_title" "$panel_width" "$TC_MUTED"
+
+    # Column width budget (inside panel, subtract 2 for borders, 2 for cursor)
+    local inner=$(( panel_width - 2 ))
+    # Fixed column widths
+    local w_cursor=3   # "▶  " or "   "
+    local w_icon=2     # icon + space
     local w_name=18
     local w_status=12
-    local w_branch=28
-    local w_activity=10
-    # Separator spaces: 2 between each column
-    local w_fixed=$(( w_name + w_status + w_branch + w_activity + 6 + 2 ))
-    # Expand branch column if terminal is wide
-    if (( w > w_fixed + 10 )); then
-        w_branch=$(( w_branch + w - w_fixed - 10 ))
-    fi
+    local w_activity=8
+    # Branch gets the remainder
+    local w_branch=$(( inner - w_cursor - w_icon - w_name - w_status - w_activity - 4 ))
+    [[ $w_branch -lt 10 ]] && w_branch=10
 
-    local sep_w=$(( w_name + w_status + w_branch + w_activity + 6 ))
-    [[ $sep_w -gt $(( w - 2 )) ]] && sep_w=$(( w - 2 ))
+    # How many session rows fit
+    local max_rows=$(( panel_height - 2 ))  # subtract top+bottom borders
+    [[ $max_rows -lt 1 ]] && max_rows=1
 
-    # ── Header ──
-    _lmv 1 1
-    printf "${_L_BG_HEADER}${_L_WHITE}${_L_BOLD}%-${w}s${_L_RESET}" "  TARVOS SESSIONS"
-    _lmv 2 1
-    printf "${_L_DIM}  %s${_L_RESET}%-$(( w - sep_w - 2 ))s\n" "$(printf '─%.0s' $(seq 1 $sep_w))" ""
+    # Draw rows
+    local row=$(( panel_top + 1 ))
+    local drawn=0
 
-    # ── Column headers ──
-    _lmv 3 1
-    printf "  ${_L_BOLD}${_L_DIM}%-${w_name}s  %-${w_status}s  %-${w_branch}s  %-${w_activity}s${_L_RESET}" \
-        "Name" "Status" "Branch" "Activity"
-    printf "%-$(( w - w_name - w_status - w_branch - w_activity - 6 - 2 ))s" ""
-
-    _lmv 4 1
-    printf "  ${_L_DIM}%s${_L_RESET}%-$(( w - sep_w - 2 ))s\n" "$(printf '─%.0s' $(seq 1 $sep_w))" ""
-
-    # ── Session rows ──
-    local row=5
-    local i
-    for (( i = 0; i < count; i++ )); do
-        local name="${_LIST_NAMES[$i]}"
-        local status="${_LIST_STATUSES[$i]}"
-        local branch="${_LIST_BRANCHES[$i]}"
-        local activity
-        activity=$(_format_activity "${_LIST_ACTIVITIES[$i]}")
-
-        local sc
-        sc=$(_status_color "$status")
-
-        # Truncate branch display
-        if [[ -z "$branch" ]]; then
-            branch="(no branch yet)"
-        fi
-
-        local cursor="  "
-        local bg=""
-        local end_bg=""
-        if (( i == _LIST_SEL )); then
-            cursor="${_L_BOLD}▶ ${_L_RESET}"
-            bg="${_L_BG_SEL}"
-            end_bg="${_L_RESET}"
-        fi
-
-        _lmv $row 1
-        printf "${bg}${cursor}${_L_BOLD}%-${w_name}s${_L_RESET}${bg}  ${sc}%-${w_status}s${_L_RESET}${bg}  ${_L_DIM}%-${w_branch}s${_L_RESET}${bg}  %-${w_activity}s${end_bg}" \
-            "${name:0:$w_name}" \
-            "${status:0:$w_status}" \
-            "${branch:0:$w_branch}" \
-            "${activity:0:$w_activity}"
-        # Fill remainder of line to clear any leftover chars
-        printf "%-$(( w - w_name - w_status - w_branch - w_activity - 6 - 2 ))s${_L_RESET}" ""
-
-        (( row++ ))
-        (( row > _LIST_ROWS_TERM - 2 )) && break
-    done
-
-    # ── Empty state ──
     if (( count == 0 )); then
-        _lmv $row 1
-        printf "  ${_L_DIM}No sessions found. Run \`tarvos init <prd> --name <name>\` to create one.${_L_RESET}%-$(( w - 70 ))s" ""
-        (( row++ ))
+        # Empty state
+        tput cup "$row" 0 2>/dev/null
+        local empty_msg="  No sessions found. Run \`tarvos init <prd> --name <name>\` to create one."
+        local empty_pad=$(( inner - ${#empty_msg} ))
+        [[ $empty_pad -lt 0 ]] && empty_pad=0
+        printf '%b' "${TC_MUTED}│${TC_RESET}${TC_SUBTLE}${empty_msg}$(printf '%*s' "$empty_pad" '')${TC_MUTED}│${TC_RESET}\n"
+        (( drawn++ ))
+    else
+        for (( i=0; i<count && drawn<max_rows; i++ )); do
+            local name="${_LIST_NAMES[$i]}"
+            local status="${_LIST_STATUSES[$i]}"
+            local branch="${_LIST_BRANCHES[$i]}"
+            local activity
+            activity=$(_format_activity "${_LIST_ACTIVITIES[$i]}")
+
+            # Selection indicator
+            local is_sel=0
+            (( i == _LIST_SEL )) && is_sel=1
+
+            # Build cursor + icon
+            local cursor_str icon_str
+            if (( is_sel )); then
+                cursor_str="${TC_ACCENT}${TC_BOLD}▶ ${TC_RESET}"
+            else
+                cursor_str="   "
+            fi
+
+            local icon color
+            icon=$(tc_status_icon "$status")
+            color=$(tc_status_color "$status")
+
+            # Animate running sessions: spinner replaces icon
+            if [[ "$status" == "running" ]]; then
+                local spin_idx=${_LIST_SPIN_IDX[$i]:-0}
+                icon=$(tc_spinner_frame "$spin_idx")
+                # Pulse color
+                if (( is_sel )); then
+                    color=$(tc_pulse_color "$_LIST_RENDER_TICK")
+                fi
+            fi
+
+            icon_str="${color}${icon}${TC_RESET}"
+
+            # Truncate fields
+            local name_disp branch_disp status_disp activity_disp
+            name_disp="${name:0:$w_name}"
+            printf -v name_disp "%-${w_name}s" "$name_disp"
+
+            [[ -z "$branch" ]] && branch="—"
+            branch_disp="${branch:0:$w_branch}"
+            printf -v branch_disp "%-${w_branch}s" "$branch_disp"
+
+            status_disp="${status:0:$w_status}"
+            printf -v status_disp "%-${w_status}s" "$status_disp"
+
+            activity_disp="${activity:0:$w_activity}"
+            printf -v activity_disp "%-${w_activity}s" "$activity_disp"
+
+            # Row background for selected
+            local row_bg row_end
+            if (( is_sel )); then
+                row_bg="${TC_SEL_BG}"
+                row_end="${TC_RESET}"
+            else
+                row_bg=""
+                row_end=""
+            fi
+
+            tput cup "$row" 0 2>/dev/null
+            # Build the content inside the box borders
+            local content="${row_bg}${cursor_str}${icon_str}${row_bg} ${TC_BOLD}${name_disp}${TC_RESET}${row_bg}  ${color}${status_disp}${TC_RESET}${row_bg}  ${TC_MUTED}${branch_disp}${TC_RESET}${row_bg}  ${TC_SUBTLE}${activity_disp}${row_end}"
+
+            # Measure plain length for padding
+            local plain_content="${cursor_str:0:3}  ${name_disp}  ${status_disp}  ${branch_disp}  ${activity_disp}"
+            local content_len=${#plain_content}
+            local pad=$(( inner - content_len ))
+            [[ $pad -lt 0 ]] && pad=0
+            local padding
+            padding=$(printf '%*s' "$pad" '')
+
+            printf '%b' "${TC_MUTED}│${TC_RESET}${content}${row_bg}${padding}${row_end}${TC_MUTED}│${TC_RESET}\n"
+
+            (( drawn++ ))
+            (( row++ ))
+        done
     fi
 
-    # ── Fill blank rows ──
-    while (( row < _LIST_ROWS_TERM - 1 )); do
-        _lmv $row 1
-        printf "%-${w}s" ""
+    # Fill remaining rows in panel
+    while (( drawn < max_rows )); do
+        tput cup "$row" 0 2>/dev/null
+        printf '%b' "${TC_MUTED}│${TC_RESET}$(printf '%*s' "$inner" '')${TC_MUTED}│${TC_RESET}\n"
+        (( drawn++ ))
         (( row++ ))
     done
+
+    # Bottom border
+    tput cup "$row" 0 2>/dev/null
+    tc_draw_box_bottom "$panel_width" "$TC_MUTED"
 
     # ── Footer ──
-    _lmv $(( _LIST_ROWS_TERM - 1 )) 1
-    printf "${_L_DIM}  %s${_L_RESET}%-$(( w - sep_w - 2 ))s" "$(printf '─%.0s' $(seq 1 $sep_w))" ""
-    _lmv $(_LIST_ROWS_TERM) 1
-    printf "${_L_DIM}  [↑↓] Navigate  [Enter] Actions  [r] Refresh  [q] Quit${_L_RESET}%-$(( w - 54 ))s" ""
+    tc_draw_footer \
+        "↑↓" "Navigate" \
+        "Enter" "Open/Actions" \
+        "s" "Start" \
+        "b" "Start (bg)" \
+        "a" "Accept" \
+        "r" "Reject" \
+        "n" "New" \
+        "R" "Refresh" \
+        "q" "Quit"
 }
 
 # ──────────────────────────────────────────────────────────────
-# Actions menu (context-aware)
-# ──────────────────────────────────────────────────────────────
-
-# Returns available action labels for a given status
-_list_actions_for_status() {
-    local status="$1"
-    case "$status" in
-        running)     echo "Attach Stop" ;;
-        stopped)     echo "Resume Reject" ;;
-        done)        echo "Accept Reject" ;;
-        initialized) echo "Start Start\ \(bg\) Reject" ;;
-        failed)      echo "Reject" ;;
-        *)           echo "Reject" ;;
-    esac
-}
-
-# Show an inline action menu at the bottom of the screen.
+# Action overlay (centered rounded-border panel)
 # Returns the selected action string, or empty string if cancelled.
-_list_show_actions() {
+# ──────────────────────────────────────────────────────────────
+_list_show_overlay() {
     local name="$1"
     local status="$2"
 
+    # Determine available actions based on status
     local -a actions=()
     case "$status" in
         running)     actions=("Attach" "Stop") ;;
-        stopped)     actions=("Resume" "Reject") ;;
-        done)        actions=("Accept" "Reject") ;;
+        stopped)     actions=("Resume" "Resume (bg)" "Reject") ;;
+        done)        actions=("Accept" "Reject" "View Summary") ;;
         initialized) actions=("Start" "Start (bg)" "Reject") ;;
         failed)      actions=("Reject") ;;
         *)           actions=("Reject") ;;
     esac
 
-    local sel=0
     local count=${#actions[@]}
-    local w=$_LIST_COLS
+    local sel=0
+
+    # Overlay dimensions
+    local ov_width=30
+    local ov_height=$(( count + 4 ))  # title + blank + actions + blank + bottom
+    local ov_row=$(( (TC_ROWS - ov_height) / 2 ))
+    local ov_col=$(( (TC_COLS - ov_width) / 2 ))
+    [[ $ov_row -lt 3 ]] && ov_row=3
+    [[ $ov_col -lt 0 ]] && ov_col=0
 
     while true; do
-        # Render action bar at bottom 3 lines
-        _lmv $(( _LIST_ROWS_TERM - 2 )) 1
-        printf "${_L_BOLD}  Actions for '${name}' [${status}]:${_L_RESET}%-$(( w - 30 - ${#name} - ${#status} ))s" ""
+        # Draw overlay panel
+        tput cup "$ov_row" "$ov_col" 2>/dev/null
+        tc_draw_box_top "Actions" "$ov_width" "$TC_ACCENT"
 
-        _lmv $(( _LIST_ROWS_TERM - 1 )) 1
-        local line="  "
+        # Blank line
+        tput cup $(( ov_row + 1 )) "$ov_col" 2>/dev/null
+        tc_draw_box_line "" "$ov_width" "$TC_ACCENT"
+
+        # Action items
         local i
-        for (( i = 0; i < count; i++ )); do
+        for (( i=0; i<count; i++ )); do
+            tput cup $(( ov_row + 2 + i )) "$ov_col" 2>/dev/null
+            local action_line
             if (( i == sel )); then
-                line+="${_L_BOLD}${_L_BG_SEL}[ ${actions[$i]} ]${_L_RESET}  "
+                action_line="${TC_ACCENT}${TC_BOLD}  ▶  ${actions[$i]}${TC_RESET}"
             else
-                line+="${_L_DIM}[ ${actions[$i]} ]${_L_RESET}  "
+                action_line="${TC_SUBTLE}     ${actions[$i]}${TC_RESET}"
             fi
+            tc_draw_box_line "$action_line" "$ov_width" "$TC_ACCENT"
         done
-        printf "%s%-$(( w ))s" "$line" ""
 
-        _lmv $(_LIST_ROWS_TERM) 1
-        printf "${_L_DIM}  [←→] Select action  [Enter] Confirm  [Esc/q] Cancel${_L_RESET}%-$(( w - 53 ))s" ""
+        # Blank line
+        tput cup $(( ov_row + 2 + count )) "$ov_col" 2>/dev/null
+        tc_draw_box_line "" "$ov_width" "$TC_ACCENT"
 
-        # Read single key
-        local key
+        # Bottom border
+        tput cup $(( ov_row + 3 + count )) "$ov_col" 2>/dev/null
+        tc_draw_box_bottom "$ov_width" "$TC_ACCENT"
+
+        # Hint below overlay
+        tput cup $(( ov_row + 4 + count )) $(( ov_col + 5 )) 2>/dev/null
+        printf '%b' "${TC_MUTED}[Esc] Cancel${TC_RESET}"
+
+        # Read key
+        local key=""
         IFS= read -r -s -n1 key 2>/dev/null || key=""
 
         case "$key" in
             $'\x1b')
-                # Escape or arrow sequence
                 local seq=""
                 IFS= read -r -s -n1 -t 0.1 seq 2>/dev/null || true
                 if [[ "$seq" == "[" ]]; then
                     local arrow=""
                     IFS= read -r -s -n1 -t 0.1 arrow 2>/dev/null || true
                     case "$arrow" in
-                        C) (( sel < count - 1 )) && (( sel++ )) ;;  # right
-                        D) (( sel > 0 )) && (( sel-- )) ;;          # left
+                        A|D)  # Up / Left
+                            (( sel > 0 )) && (( sel-- ))
+                            ;;
+                        B|C)  # Down / Right
+                            (( sel < count - 1 )) && (( sel++ ))
+                            ;;
                     esac
                 else
-                    # Plain Escape — cancel
-                    echo ""
+                    # Plain Escape — cancel (no re-render bug)
+                    printf ''
                     return 0
                 fi
                 ;;
             "")
-                # Enter key
-                echo "${actions[$sel]}"
+                # Enter
+                printf '%s' "${actions[$sel]}"
                 return 0
                 ;;
+            j)
+                (( sel < count - 1 )) && (( sel++ ))
+                ;;
+            k)
+                (( sel > 0 )) && (( sel-- ))
+                ;;
             q|Q)
-                echo ""
+                # Cancel
+                printf ''
                 return 0
                 ;;
         esac
@@ -314,14 +383,16 @@ _list_show_actions() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# Execute an action
+# Execute an action for a session
 # ──────────────────────────────────────────────────────────────
 _list_execute_action() {
     local name="$1"
     local action="$2"
     local tarvos_script="${3:-tarvos}"
 
-    # Tear down TUI before running subcommands that print to terminal
+    [[ -z "$action" ]] && return 0  # Cancelled
+
+    # Properly tear down TUI before running subcommands
     _list_tui_stop
 
     case "$action" in
@@ -333,6 +404,9 @@ _list_execute_action() {
             ;;
         "Resume")
             "$tarvos_script" begin "$name" --continue
+            ;;
+        "Resume (bg)")
+            "$tarvos_script" begin "$name" --continue --bg
             ;;
         "Start")
             "$tarvos_script" begin "$name"
@@ -346,22 +420,66 @@ _list_execute_action() {
         "Reject")
             "$tarvos_script" reject "$name"
             ;;
-        "")
-            # Cancelled — re-enter TUI
-            _list_tui_start
-            return 0
+        "View Summary")
+            local summary_file
+            summary_file="${SESSIONS_DIR:-.tarvos/sessions}/${name}/summary.md"
+            if [[ -f "$summary_file" ]]; then
+                "${PAGER:-less}" "$summary_file"
+            else
+                echo "No summary available for session '${name}'."
+                sleep 2
+            fi
             ;;
     esac
 
-    # After action completes, offer to return to list
-    echo ""
-    echo "Press any key to return to session list, or q to quit."
-    local key
-    IFS= read -r -s -n1 key 2>/dev/null || key="q"
-    if [[ "$key" != "q" ]] && [[ "$key" != "Q" ]]; then
-        _list_load_sessions
-        _list_tui_start
+    # After action, pause briefly then re-enter TUI
+    if [[ "$action" != "Attach" && "$action" != "Start" && "$action" != "Resume" ]]; then
+        echo ""
+        printf '%b' "${TC_MUTED}Press any key to return to session list, or q to quit.${TC_RESET}\n"
+        local key=""
+        IFS= read -r -s -n1 key 2>/dev/null || key="q"
+        if [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
+            return 1  # signal caller to quit
+        fi
     fi
+
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────
+# Inline new-session prompt
+# Prompts for session name + PRD path, then calls tarvos init
+# ──────────────────────────────────────────────────────────────
+_list_new_session_prompt() {
+    local tarvos_script="$1"
+
+    _list_tui_stop
+
+    echo ""
+    printf '%b' "${TC_ACCENT}${TC_BOLD}New Session${TC_RESET}\n"
+    printf '%b' "${TC_MUTED}──────────────────────────────${TC_RESET}\n"
+
+    # Restore cursor for input
+    tput cnorm 2>/dev/null
+
+    local sess_name prd_path
+    printf '%b' "${TC_NORMAL}Session name: ${TC_RESET}"
+    IFS= read -r sess_name
+    printf '%b' "${TC_NORMAL}PRD path:     ${TC_RESET}"
+    IFS= read -r prd_path
+
+    if [[ -n "$sess_name" ]] && [[ -n "$prd_path" ]]; then
+        echo ""
+        "$tarvos_script" init "$prd_path" --name "$sess_name"
+    else
+        printf '%b' "${TC_WARNING}Cancelled.${TC_RESET}\n"
+    fi
+
+    echo ""
+    printf '%b' "${TC_MUTED}Press any key to return to session list...${TC_RESET}\n"
+    IFS= read -r -s -n1 _ 2>/dev/null || true
+
+    return 0
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -369,23 +487,22 @@ _list_execute_action() {
 # ──────────────────────────────────────────────────────────────
 _list_tui_start() {
     _LIST_TUI_ACTIVE=1
-    tput smcup 2>/dev/null   # alternate screen
-    tput civis 2>/dev/null   # hide cursor
-    tput clear 2>/dev/null
+    tc_screen_init
+    TC_RENDER_CALLBACK="_list_render"
     _list_render
 }
 
 _list_tui_stop() {
     if (( _LIST_TUI_ACTIVE )); then
         _LIST_TUI_ACTIVE=0
-        tput cnorm 2>/dev/null   # show cursor
-        tput rmcup 2>/dev/null   # restore screen
+        TC_RENDER_CALLBACK=""
+        tc_screen_cleanup
     fi
 }
 
 # ──────────────────────────────────────────────────────────────
 # Main entry point: run the list TUI
-# Args: $1 = tarvos_script path (for executing actions)
+# Args: $1 = tarvos_script path (default: "tarvos")
 # ──────────────────────────────────────────────────────────────
 list_tui_run() {
     local tarvos_script="${1:-tarvos}"
@@ -395,8 +512,8 @@ list_tui_run() {
         return 1
     fi
 
+    # Non-interactive fallback (plain text listing)
     if [[ ! -t 1 ]]; then
-        # Non-interactive: fall back to plain text listing
         _list_load_sessions
         local count=${#_LIST_NAMES[@]}
         if (( count == 0 )); then
@@ -404,12 +521,12 @@ list_tui_run() {
             return 0
         fi
         printf "%-20s  %-12s  %-30s  %s\n" "Name" "Status" "Branch" "Activity"
-        printf "%s\n" "$(printf '─%.0s' $(seq 1 80))"
+        printf '%s\n' "$(printf '─%.0s' $(seq 1 80))"
         local i
-        for (( i = 0; i < count; i++ )); do
-            local act
+        for (( i=0; i<count; i++ )); do
+            local act br
             act=$(_format_activity "${_LIST_ACTIVITIES[$i]}")
-            local br="${_LIST_BRANCHES[$i]}"
+            br="${_LIST_BRANCHES[$i]}"
             [[ -z "$br" ]] && br="(no branch)"
             printf "%-20s  %-12s  %-30s  %s\n" \
                 "${_LIST_NAMES[$i]}" "${_LIST_STATUSES[$i]}" "$br" "$act"
@@ -419,27 +536,27 @@ list_tui_run() {
 
     _list_load_sessions
 
-    # Set up cleanup trap
+    # Ensure selection is in bounds
+    local count=${#_LIST_NAMES[@]}
+    (( _LIST_SEL >= count && count > 0 )) && _LIST_SEL=$(( count - 1 ))
+
+    # Cleanup trap — fixes nested smcup issue; runs on INT/TERM/EXIT
     trap '_list_tui_stop; exit 0' INT TERM EXIT
 
     _list_tui_start
 
-    local count=${#_LIST_NAMES[@]}
-
     while true; do
-        # Refresh size
-        _LIST_COLS=$(tput cols 2>/dev/null || echo 80)
-        _LIST_ROWS_TERM=$(tput lines 2>/dev/null || echo 24)
+        count=${#_LIST_NAMES[@]}
+        (( _LIST_SEL >= count && count > 0 )) && _LIST_SEL=$(( count - 1 ))
 
-        # Read a key (timeout so we can refresh periodically)
+        # Non-blocking read (3s timeout for auto-refresh and spinner animation)
         local key=""
-        IFS= read -r -s -n1 -t 5 key 2>/dev/null || true
+        IFS= read -r -s -n1 -t 3 key 2>/dev/null || true
 
-        # Periodic refresh (on timeout key is empty)
         if [[ -z "$key" ]]; then
+            # Timeout: auto-refresh + re-render
             _list_load_sessions
             count=${#_LIST_NAMES[@]}
-            # Keep selection in bounds
             (( _LIST_SEL >= count && count > 0 )) && _LIST_SEL=$(( count - 1 ))
             _list_render
             continue
@@ -449,12 +566,90 @@ list_tui_run() {
             q|Q)
                 break
                 ;;
-            r|R)
+
+            R)
+                # Force refresh
                 _list_load_sessions
                 count=${#_LIST_NAMES[@]}
                 (( _LIST_SEL >= count && count > 0 )) && _LIST_SEL=$(( count - 1 ))
                 _list_render
                 ;;
+
+            k)
+                # Move up
+                (( _LIST_SEL > 0 )) && (( _LIST_SEL-- ))
+                _list_render
+                ;;
+
+            j)
+                # Move down
+                (( count > 0 && _LIST_SEL < count - 1 )) && (( _LIST_SEL++ ))
+                _list_render
+                ;;
+
+            s)
+                # Start selected initialized session
+                if (( count > 0 )); then
+                    local sel_name="${_LIST_NAMES[$_LIST_SEL]}"
+                    local sel_status="${_LIST_STATUSES[$_LIST_SEL]}"
+                    if [[ "$sel_status" == "initialized" ]]; then
+                        _list_execute_action "$sel_name" "Start" "$tarvos_script" || break
+                        _list_load_sessions
+                        _list_tui_start
+                    fi
+                fi
+                ;;
+
+            b)
+                # Start selected session in background
+                if (( count > 0 )); then
+                    local sel_name="${_LIST_NAMES[$_LIST_SEL]}"
+                    local sel_status="${_LIST_STATUSES[$_LIST_SEL]}"
+                    local bg_action=""
+                    case "$sel_status" in
+                        initialized) bg_action="Start (bg)" ;;
+                        stopped)     bg_action="Resume (bg)" ;;
+                    esac
+                    if [[ -n "$bg_action" ]]; then
+                        _list_execute_action "$sel_name" "$bg_action" "$tarvos_script" || break
+                        _list_load_sessions
+                        _list_tui_start
+                    fi
+                fi
+                ;;
+
+            a)
+                # Accept selected done session
+                if (( count > 0 )); then
+                    local sel_name="${_LIST_NAMES[$_LIST_SEL]}"
+                    local sel_status="${_LIST_STATUSES[$_LIST_SEL]}"
+                    if [[ "$sel_status" == "done" ]]; then
+                        _list_execute_action "$sel_name" "Accept" "$tarvos_script" || break
+                        _list_load_sessions
+                        _list_tui_start
+                    fi
+                fi
+                ;;
+
+            r)
+                # Reject selected session
+                if (( count > 0 )); then
+                    local sel_name="${_LIST_NAMES[$_LIST_SEL]}"
+                    _list_execute_action "$sel_name" "Reject" "$tarvos_script" || break
+                    _list_load_sessions
+                    _list_tui_start
+                fi
+                ;;
+
+            n)
+                # New session
+                _list_new_session_prompt "$tarvos_script"
+                _list_load_sessions
+                count=${#_LIST_NAMES[@]}
+                (( _LIST_SEL >= count && count > 0 )) && _LIST_SEL=$(( count - 1 ))
+                _list_tui_start
+                ;;
+
             $'\x1b')
                 # Arrow key escape sequence
                 local seq="" arrow=""
@@ -462,34 +657,37 @@ list_tui_run() {
                 if [[ "$seq" == "[" ]]; then
                     IFS= read -r -s -n1 -t 0.1 arrow 2>/dev/null || true
                     case "$arrow" in
-                        A)  # Up
+                        A)  # Up arrow
                             (( _LIST_SEL > 0 )) && (( _LIST_SEL-- ))
                             _list_render
                             ;;
-                        B)  # Down
+                        B)  # Down arrow
                             (( count > 0 && _LIST_SEL < count - 1 )) && (( _LIST_SEL++ ))
                             _list_render
                             ;;
                     esac
                 fi
+                # If Escape alone (seq empty), just ignore — no double-render bug
                 ;;
+
             "")
-                # Enter key
+                # Enter key — show action overlay
                 if (( count > 0 )); then
                     local sel_name="${_LIST_NAMES[$_LIST_SEL]}"
                     local sel_status="${_LIST_STATUSES[$_LIST_SEL]}"
 
                     local action
-                    action=$(_list_show_actions "$sel_name" "$sel_status")
+                    action=$(_list_show_overlay "$sel_name" "$sel_status")
 
                     if [[ -n "$action" ]]; then
-                        _list_execute_action "$sel_name" "$action" "$tarvos_script"
-                        # Reload after action
+                        _list_execute_action "$sel_name" "$action" "$tarvos_script" || break
                         _list_load_sessions
                         count=${#_LIST_NAMES[@]}
                         (( _LIST_SEL >= count && count > 0 )) && _LIST_SEL=$(( count - 1 ))
+                        # Re-initialize TUI after returning from subcommand
+                        _list_tui_start
                     else
-                        # Cancelled — redraw
+                        # Cancelled — just re-render cleanly (no double-render bug)
                         _list_render
                     fi
                 fi
@@ -498,4 +696,5 @@ list_tui_run() {
     done
 
     _list_tui_stop
+    trap - INT TERM EXIT
 }

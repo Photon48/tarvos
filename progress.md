@@ -1,20 +1,18 @@
 # Progress Report
 
 ## Current Status
-Phase 1 of 5: Git Environment Validation + TUI Core Library
+Phase 2 of 5: Session List View — Full Rebuild
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Added git repo validation (Scenario A: no repo → exit with instructions; Scenario B: auto-create/update .gitignore with .tarvos/) in cmd_init after prd_file absolute path resolution
-- tarvos.sh: Removed "Tip: add .tarvos/ to your .gitignore" from _init_display_no_preview
-- lib/prd-preview.sh: Removed "Tip: add .tarvos/ to your .gitignore" from display_preview()
-- lib/tui-core.sh: Created new shared TUI library with 256-color palette, border drawing (rounded corners), braille spinner engine, progress bar, screen lifecycle, status icons, header, footer, and animation helpers
-- lib/log-manager.sh: Now sources tui-core.sh; replaced inline readonly color vars with aliases mapping to tui-core.sh palette
+- lib/list-tui.sh: Full rewrite using tui-core.sh primitives — rounded-border panel layout, animated braille spinners per running session, action overlay (arrow-navigable, Esc cancels cleanly), all key bindings (↑↓/jk, Enter, s, b, a, r, n, R, q), 3s auto-refresh, fixed double-render-on-Escape bug, fixed nested smcup bug (_list_tui_stop before subcommands, _list_tui_start on return), macOS/GNU date fallback in _format_activity, non-interactive plain-text fallback
 
 ## Immediate Next Task
-Begin Phase 2: Rewrite lib/list-tui.sh from scratch using tui-core.sh primitives into a fully working session browser with action overlay, key bindings, auto-refresh, and animated spinners.
+Begin Phase 3: Overhaul lib/log-manager.sh run view TUI using tui-core.sh, add live log panel with stream-json event emitter in lib/context-monitor.sh, add v-toggle (summary/raw), scrollable log, b/q key handlers.
 
 ## Key Files for Next Task
-- lib/list-tui.sh (rewrite entirely)
-- lib/tui-core.sh (already complete — source it)
-- lib/session-manager.sh (understand session loading API)
+- lib/log-manager.sh (refactor TUI rendering to use tui-core.sh)
+- lib/context-monitor.sh (add emit_tui_event() writing loop-NNN-events.jsonl)
+
+## Gotchas
+- log-manager.sh already sources tui-core.sh (done in Phase 1) — don't re-add the source line
