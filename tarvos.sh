@@ -75,8 +75,9 @@ Options:
 
 Behavior:
   - Requires a clean working directory (no uncommitted changes).
-  - On first run: creates a 'tarvos/<name>-<timestamp>' branch and checks it out.
-  - On resume:    checks out the existing session branch.
+  - On first run: creates a 'tarvos/<name>-<timestamp>' branch in an isolated
+                  git worktree under .tarvos/worktrees/<name>/.
+  - On resume:    reuses the existing worktree (or recreates it from the branch).
   - With --bg:    starts the session as a background process (nohup).
                   Use 'tarvos attach <name>' to follow live output.
 
@@ -119,18 +120,24 @@ usage_list() {
     cat <<EOF
 Usage: tarvos list
 
-Show all sessions in an interactive TUI.
+Open the interactive session browser (also: run 'tarvos' with no arguments).
 
-Navigation:
-  ↑ / ↓    Move selection
-  Enter     Open actions menu for selected session
-  r         Refresh session list
+Keys:
+  ↑ / k    Move selection up
+  ↓ / j    Move selection down
+  Enter     Open run view (running sessions) or actions menu
+  s         Start selected initialized session
+  b         Start selected session in background
+  a         Accept selected done session
+  r         Reject selected session
+  n         New session (prompts for name + PRD path)
+  R         Force refresh
   q         Quit
 
-Actions (context-aware per session status):
+Actions menu (context-aware per session status):
   running     → Attach, Stop
-  stopped     → Resume, Reject
-  done        → Accept, Reject
+  stopped     → Resume, Resume (bg), Reject
+  done        → Accept, Reject, View Summary
   initialized → Start, Start (bg), Reject
   failed      → Reject
 EOF
@@ -197,19 +204,20 @@ EOF
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
+       tarvos                          Open the session browser TUI
 
 Tarvos orchestrates a chain of fresh AI agents on a single plan, each picking
-up where the last left off. Every session runs on its own git branch — accept
-good work, reject experiments, without touching git yourself.
+up where the last left off. Every session runs on its own isolated git worktree
+— accept good work, reject experiments, without touching git yourself.
 
 Commands:
   init <prd-path> --name <name>   Create a new session
-  begin <name>                    Run session agent loop (creates git branch)
+  begin <name>                    Run session agent loop
   begin <name> --continue         Resume from existing progress checkpoint
   begin <name> --bg               Run session in the background (detached)
   attach <name>                   Follow live output of a background session
   stop <name>                     Stop a running background session
-  list                            Show all sessions in an interactive TUI
+  list                            Open the session browser TUI
   accept <name>                   Merge completed session branch and archive
   reject <name> [--force]         Delete session branch and remove session
   migrate                         Migrate legacy .tarvos/config to session format
