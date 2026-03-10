@@ -732,9 +732,9 @@ cmd_list() {
     done
 
     source "${SCRIPT_DIR}/lib/session-manager.sh"
-    source "${SCRIPT_DIR}/lib/list-tui.sh"
+    source "${SCRIPT_DIR}/lib/tui-app.sh"
 
-    list_tui_run "${SCRIPT_DIR}/tarvos.sh"
+    tui_app_run "${SCRIPT_DIR}/tarvos.sh"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1371,7 +1371,11 @@ run_agent_loop() {
 # ──────────────────────────────────────────────────────────────
 main() {
     if [[ $# -eq 0 ]]; then
-        usage_root
+        # No arguments: launch the unified TUI session list
+        source "${SCRIPT_DIR}/lib/session-manager.sh"
+        source "${SCRIPT_DIR}/lib/tui-app.sh"
+        tui_app_run "${SCRIPT_DIR}/tarvos.sh"
+        exit $?
     fi
 
     local cmd="$1"
