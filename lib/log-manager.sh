@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # log-manager.sh - TUI dashboard with real-time visibility into Tarvos runs
+# Phase 3: Refactored to use tui-core.sh panels, live event tail, scroll/view toggle, key handlers.
 
 # ──────────────────────────────────────────────────────────────
 # Source shared TUI core library
@@ -43,7 +44,8 @@ CURRENT_PHASE_INFO="Starting..."
 CURRENT_SIGNAL=""
 CURRENT_TOKEN_COUNT=0
 CURRENT_TOKEN_LIMIT=100000
-CURRENT_STATUS="IDLE"       # IDLE, RUNNING, CONTEXT_LIMIT, CONTINUATION, RECOVERY, DONE
+CURRENT_STATUS="IDLE"       # IDLE, RUNNING, CONTEXT_LIMIT, CONTINUATION, RECOVERY, DONE, ERROR
+CURRENT_SESSION_NAME=""     # optional — set for header subtitle
 RUN_START_TIME=0
 ITER_START_TIME=0
 
@@ -54,9 +56,18 @@ declare -a HISTORY_TOKENS=()
 declare -a HISTORY_DURATION=()
 declare -a HISTORY_NOTE=()
 
-# Activity log (last 8 lines)
+# Activity log — array of formatted display lines (bounded to 500 entries)
 declare -a ACTIVITY_LOG=()
-MAX_ACTIVITY=8
+MAX_ACTIVITY_STORED=500
+
+# Phase 3: scroll and view mode state
+LOG_SCROLL_OFFSET=0     # 0 = bottom/latest; positive = scrolled up N lines
+LOG_VIEW_MODE="summary" # "summary" or "raw"
+
+# Phase 3: event tail reader state
+_LM_TAIL_PID=""         # PID of background tail reader subshell
+_LM_TAIL_TMPFILE=""     # temp file that accumulates pending raw event lines
+_LM_CURRENT_EVENTS_LOG="" # path to the current loop-NNN-events.jsonl
 
 # ──────────────────────────────────────────────────────────────
 # Logging init
@@ -80,6 +91,7 @@ init_logging() {
 get_raw_log()    { echo "${LOG_DIR}/loop-$(printf '%03d' "$1")-raw.jsonl"; }
 get_usage_log()  { echo "${LOG_DIR}/loop-$(printf '%03d' "$1")-usage.log"; }
 get_stderr_log() { echo "${LOG_DIR}/loop-$(printf '%03d' "$1")-stderr.log"; }
+get_events_log() { echo "${LOG_DIR}/loop-$(printf '%03d' "$1")-events.jsonl"; }
 
 # ──────────────────────────────────────────────────────────────
 # TUI lifecycle
@@ -110,6 +122,9 @@ tui_init() {
 }
 
 tui_cleanup() {
+    # Stop event tail reader if running
+    _lm_tail_stop
+
     if [[ "$TUI_ENABLED" -eq 1 ]]; then
         TUI_ENABLED=0
         tput cnorm 2>/dev/null   # show cursor
@@ -119,10 +134,142 @@ tui_cleanup() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# TUI rendering
+# Event tail reader — background process that watches the current
+# loop-NNN-events.jsonl and appends new lines to _LM_TAIL_TMPFILE
 # ──────────────────────────────────────────────────────────────
 
-# Move to row,col (1-based)
+_lm_tail_start() {
+    local events_log="$1"
+    _lm_tail_stop  # stop any existing reader
+
+    _LM_CURRENT_EVENTS_LOG="$events_log"
+    _LM_TAIL_TMPFILE=$(mktemp)
+
+    if [[ ! -f "$events_log" ]]; then
+        return 0
+    fi
+
+    # Background tail: appends new lines to the tmp file
+    (
+        tail -f "$events_log" 2>/dev/null >> "$_LM_TAIL_TMPFILE"
+    ) &
+    _LM_TAIL_PID=$!
+}
+
+_lm_tail_stop() {
+    if [[ -n "$_LM_TAIL_PID" ]] && kill -0 "$_LM_TAIL_PID" 2>/dev/null; then
+        kill "$_LM_TAIL_PID" 2>/dev/null
+        wait "$_LM_TAIL_PID" 2>/dev/null || true
+    fi
+    _LM_TAIL_PID=""
+    if [[ -n "$_LM_TAIL_TMPFILE" ]] && [[ -f "$_LM_TAIL_TMPFILE" ]]; then
+        rm -f "$_LM_TAIL_TMPFILE"
+    fi
+    _LM_TAIL_TMPFILE=""
+}
+
+# Drain pending lines from the tail tmpfile into ACTIVITY_LOG
+# Returns 0 if new events were processed (triggers re-render), 1 if no new events
+_lm_drain_events() {
+    [[ -z "$_LM_TAIL_TMPFILE" ]] && return 1
+    [[ ! -s "$_LM_TAIL_TMPFILE" ]] && return 1
+
+    local new_events
+    new_events=$(cat "$_LM_TAIL_TMPFILE" 2>/dev/null)
+    # Clear the tmp file atomically (truncate) so we don't re-read
+    > "$_LM_TAIL_TMPFILE"
+
+    [[ -z "$new_events" ]] && return 1
+
+    local line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        _lm_append_event_line "$line"
+    done <<< "$new_events"
+
+    return 0
+}
+
+# Parse a single events-jsonl line and append a formatted entry to ACTIVITY_LOG
+_lm_append_event_line() {
+    local line="$1"
+    local event_type
+    event_type=$(printf '%s' "$line" | jq -r '.type // empty' 2>/dev/null)
+    local ts_raw
+    ts_raw=$(printf '%s' "$line" | jq -r '.ts // empty' 2>/dev/null)
+    local ts_str="--:--:--"
+    if [[ -n "$ts_raw" ]] && [[ "$ts_raw" =~ ^[0-9]+$ ]]; then
+        ts_str=$(date -d "@${ts_raw}" '+%H:%M:%S' 2>/dev/null \
+                 || date -r "$ts_raw" '+%H:%M:%S' 2>/dev/null \
+                 || echo "--:--:--")
+    fi
+
+    local formatted=""
+    case "$event_type" in
+        tool_use)
+            local tool input
+            tool=$(printf '%s' "$line" | jq -r '.tool // "?"' 2>/dev/null)
+            input=$(printf '%s' "$line" | jq -r '.input // ""' 2>/dev/null)
+            # input may be a stringified JSON; show first 60 chars
+            input="${input:0:60}"
+            if [[ "$LOG_VIEW_MODE" == "summary" ]]; then
+                formatted="${ts_str}  ${TC_ACCENT}▶ ${tool}:${TC_RESET} ${input}"
+            fi
+            # raw mode: skip tool events
+            ;;
+        tool_result)
+            local output success
+            output=$(printf '%s' "$line" | jq -r '.output // ""' 2>/dev/null)
+            output="${output:0:60}"
+            success=$(printf '%s' "$line" | jq -r '.success // "true"' 2>/dev/null)
+            if [[ "$LOG_VIEW_MODE" == "summary" ]]; then
+                if [[ "$success" == "true" ]]; then
+                    formatted="${ts_str}  ${TC_SUCCESS}✓${TC_RESET} ${output}"
+                else
+                    formatted="${ts_str}  ${TC_ERROR}✗${TC_RESET} ${output}"
+                fi
+            fi
+            # raw mode: skip tool result events
+            ;;
+        text)
+            local content
+            content=$(printf '%s' "$line" | jq -r '.content // ""' 2>/dev/null)
+            content="${content:0:60}"
+            if [[ "$LOG_VIEW_MODE" == "summary" ]]; then
+                formatted="${ts_str}  ${TC_MUTED}· Claude:${TC_RESET} ${content}"
+            else
+                # raw mode: show text verbatim
+                formatted="${ts_str}  ${content}"
+            fi
+            ;;
+        signal)
+            local value
+            value=$(printf '%s' "$line" | jq -r '.value // ""' 2>/dev/null)
+            if [[ "$LOG_VIEW_MODE" == "summary" ]]; then
+                formatted="${ts_str}  ${TC_INFO}⚑ ${value}${TC_RESET}"
+            else
+                formatted="${ts_str}  ${TC_INFO}⚑ ${value}${TC_RESET}"
+            fi
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    [[ -z "$formatted" ]] && return 0
+
+    ACTIVITY_LOG+=("$formatted")
+    # Keep bounded
+    if [[ ${#ACTIVITY_LOG[@]} -gt $MAX_ACTIVITY_STORED ]]; then
+        ACTIVITY_LOG=("${ACTIVITY_LOG[@]:1}")
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────
+# TUI rendering — full-screen run view using tui-core.sh panels
+# ──────────────────────────────────────────────────────────────
+
+# Move to row,col (1-based internal helper)
 _mv() { tput cup "$(($1 - 1))" "$(($2 - 1))" 2>/dev/null; }
 
 # Print a full-width line padded with spaces
@@ -131,199 +278,352 @@ _line() {
     printf "%-${TUI_COLS}s" "$text"
 }
 
-# Render the entire dashboard
 tui_render() {
     [[ "$TUI_ENABLED" -eq 1 ]] || return 0
 
     # Refresh terminal size
     TUI_COLS=$(tput cols 2>/dev/null || echo 80)
     TUI_ROWS=$(tput lines 2>/dev/null || echo 24)
+    TC_COLS=$TUI_COLS
+    TC_ROWS=$TUI_ROWS
 
     local now
     now=$(date +%s)
     local elapsed=$(( now - RUN_START_TIME ))
     local elapsed_str
     elapsed_str=$(format_duration "$elapsed")
-
     local iter_elapsed=""
     if [[ "$ITER_START_TIME" -gt 0 ]]; then
         iter_elapsed=$(format_duration $(( now - ITER_START_TIME )))
     fi
 
-    local row=1
     local w=$TUI_COLS
-    local bar_w=$(( w - 40 ))
-    [[ "$bar_w" -lt 10 ]] && bar_w=10
-    [[ "$bar_w" -gt 50 ]] && bar_w=50
+    local cur_row=0   # 0-indexed for tput cup
 
-    # ── Header ──
-    _mv $row 1
-    echo -ne "${BG_HEADER}${WHITE}${BOLD}"
-    _line "  TARVOS"
-    row=$(( row + 1 ))
-    _mv $row 1
-    echo -ne "${BG_HEADER}${WHITE}"
-    _line "  Autonomous AI Coding Orchestrator"
-    echo -ne "${RESET}"
-    row=$(( row + 1 ))
+    # ── Header (2 rows) ──
+    # Build subtitle: session name + status + loop info + context bar
+    local status_icon status_color
+    status_icon=$(tc_status_icon "$CURRENT_STATUS")
+    status_color=$(tc_status_color "$CURRENT_STATUS")
 
-    # ── Blank separator ──
-    _mv $row 1; _line ""; row=$(( row + 1 ))
-
-    # ── Status row ──
-    local status_icon status_color status_label
-    case "$CURRENT_STATUS" in
-        IDLE)           status_icon="○" ; status_color="${DIM}"    ; status_label="Idle" ;;
-        RUNNING)        status_icon="●" ; status_color="${GREEN}"  ; status_label="Agent running" ;;
-        CONTEXT_LIMIT)  status_icon="!" ; status_color="${YELLOW}" ; status_label="Context limit hit" ;;
-        CONTINUATION)   status_icon="↻" ; status_color="${YELLOW}" ; status_label="Continuation session" ;;
-        RECOVERY)       status_icon="⚠" ; status_color="${RED}"    ; status_label="Recovery session" ;;
-        DONE)           status_icon="✓" ; status_color="${GREEN}"  ; status_label="Complete" ;;
-        ERROR)          status_icon="✗" ; status_color="${RED}"    ; status_label="Error" ;;
-    esac
-
-    local pad=$((w - 30))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "${BOLD}  Status: ${status_color}%s %s${RESET}%-${pad}s" "$status_icon" "$status_label" ""
-    row=$(( row + 1 ))
-
-    pad=$((w - 50))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "${DIM}  Elapsed: ${RESET}%-12s${DIM}  Iteration: ${RESET}%-12s" "$elapsed_str" "${iter_elapsed:-—}"
-    printf "%-${pad}s" ""
-    row=$(( row + 1 ))
-
-    # ── Blank separator ──
-    _mv $row 1; _line ""; row=$(( row + 1 ))
-
-    # ── Loop / Phase info ──
-    pad=$((w - 30))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "${BOLD}  Loop:${RESET}  %d / %d" "$CURRENT_LOOP" "$CURRENT_MAX_LOOPS"
-    printf "%-${pad}s" ""
-    row=$(( row + 1 ))
-
-    pad=$((w - ${#CURRENT_PHASE_INFO} - 12))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "${BOLD}  Phase:${RESET} %s" "$CURRENT_PHASE_INFO"
-    printf "%-${pad}s" ""
-    row=$(( row + 1 ))
-
-    # ── Blank separator ──
-    _mv $row 1; _line ""; row=$(( row + 1 ))
-
-    # ── Token progress bar ──
+    local loop_info="${CURRENT_LOOP}/${CURRENT_MAX_LOOPS}"
     local pct=0
     if [[ "$CURRENT_TOKEN_LIMIT" -gt 0 ]]; then
         pct=$(( CURRENT_TOKEN_COUNT * 100 / CURRENT_TOKEN_LIMIT ))
+        [[ "$pct" -gt 100 ]] && pct=100
     fi
-    [[ "$pct" -gt 100 ]] && pct=100
-    local filled=$(( pct * bar_w / 100 ))
-    local empty_cells=$(( bar_w - filled ))
-    local bar_color="${GREEN}"
-    [[ "$pct" -ge 60 ]] && bar_color="${YELLOW}"
-    [[ "$pct" -ge 80 ]] && bar_color="${RED}"
+    local prog_bar
+    prog_bar=$(tc_draw_progress "$pct" 16)
 
-    local bar=""
-    local i
-    for ((i = 0; i < filled; i++)); do bar+="█"; done
-    for ((i = 0; i < empty_cells; i++)); do bar+="░"; done
+    local subtitle
+    if [[ -n "$CURRENT_SESSION_NAME" ]]; then
+        subtitle="${CURRENT_SESSION_NAME}  ${status_color}${status_icon} ${CURRENT_STATUS}${TC_RESET}  Loop ${loop_info}  ${prog_bar} ${pct}% context"
+    else
+        subtitle="${status_color}${status_icon} ${CURRENT_STATUS}${TC_RESET}  Loop ${loop_info}  ${prog_bar} ${pct}% context"
+    fi
 
-    pad=$((w - bar_w - 35))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "  ${BOLD}Tokens:${RESET} ${bar_color}[%s]${RESET} %3d%%  %d / %d" \
-        "$bar" "$pct" "$CURRENT_TOKEN_COUNT" "$CURRENT_TOKEN_LIMIT"
-    printf "%-${pad}s" ""
-    row=$(( row + 1 ))
+    tput cup 0 0 2>/dev/null
+    tc_draw_header "$subtitle"
+    cur_row=2
 
-    # ── Blank separator ──
-    _mv $row 1; _line ""; row=$(( row + 1 ))
+    # ── Blank row ──
+    tput cup $cur_row 0 2>/dev/null; printf "%-${w}s" ""; cur_row=$(( cur_row + 1 ))
 
-    # ── Iteration History ──
-    pad=$((w - 60))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "${BOLD}${DIM}  %-8s %-22s %-10s %-10s %s${RESET}" "Loop" "Signal" "Tokens" "Duration" "Note"
-    printf "%-${pad}s" ""
-    row=$(( row + 1 ))
+    # ── Status panel (3 rows: top+1 content+bottom) ──
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_top "Status" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
 
-    local sep_w=$((w - 4))
-    [[ "$sep_w" -lt 1 ]] && sep_w=1
-    _mv $row 1
-    printf "${DIM}  %s${RESET}" "$(printf '─%.0s' $(seq 1 "$sep_w"))"
-    row=$(( row + 1 ))
+    local status_label
+    case "$CURRENT_STATUS" in
+        IDLE)           status_label="Idle" ;;
+        RUNNING)        status_label="Agent running" ;;
+        CONTEXT_LIMIT)  status_label="Context limit hit" ;;
+        CONTINUATION)   status_label="Continuation session" ;;
+        RECOVERY)       status_label="Recovery session" ;;
+        DONE)           status_label="Complete" ;;
+        ERROR)          status_label="Error" ;;
+        *)              status_label="$CURRENT_STATUS" ;;
+    esac
 
+    local spinner_frame=""
+    [[ "$CURRENT_STATUS" == "RUNNING" ]] && spinner_frame=" $(tc_spinner_frame $TC_RENDER_TICK)"
+
+    local line1_plain="${status_color}${status_icon}${spinner_frame}${TC_RESET} ${status_label}"
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_line "  ${line1_plain}" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    local elapsed_line="  ${TC_DIM}Elapsed:${TC_RESET} $(printf '%-12s' "$elapsed_str")  ${TC_DIM}Iteration:${TC_RESET} $(printf '%-12s' "${iter_elapsed:-—}")"
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_line "$elapsed_line" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    if [[ -n "$CURRENT_PHASE_INFO" ]]; then
+        local phase_line="  ${TC_DIM}Phase:${TC_RESET} ${CURRENT_PHASE_INFO}"
+        tput cup $cur_row 0 2>/dev/null
+        tc_draw_box_line "$phase_line" "$w" "$TC_NORMAL"
+        cur_row=$(( cur_row + 1 ))
+    fi
+
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_bottom "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    # ── Context Window panel (3 rows) ──
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_top "Context Window" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    local ctx_bar
+    ctx_bar=$(tc_draw_progress "$pct" 24)
+    local ctx_line="  ${ctx_bar}   ${CURRENT_TOKEN_COUNT} / ${CURRENT_TOKEN_LIMIT} tokens"
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_line "$ctx_line" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_bottom "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    # ── History panel ──
     local hist_count=${#HISTORY_LOOP[@]}
-    local hist_show=$(( TUI_ROWS - row - MAX_ACTIVITY - 5 ))
-    [[ "$hist_show" -lt 3 ]] && hist_show=3
+    # How many rows can we dedicate to history? Leave at least 8 for activity log panel.
+    local remaining_for_history=$(( TUI_ROWS - cur_row - 8 - 2 ))
+    [[ "$remaining_for_history" -lt 2 ]] && remaining_for_history=2
+    [[ "$remaining_for_history" -gt 6 ]] && remaining_for_history=6
+
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_top "History" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    local hist_rows_shown=0
     local hist_start=0
-    [[ "$hist_count" -gt "$hist_show" ]] && hist_start=$(( hist_count - hist_show ))
+    [[ "$hist_count" -gt "$remaining_for_history" ]] && hist_start=$(( hist_count - remaining_for_history ))
 
-    for ((i = hist_start; i < hist_count; i++)); do
+    local i
+    for (( i=hist_start; i<hist_count && hist_rows_shown<remaining_for_history; i++ )); do
         local sig="${HISTORY_SIGNAL[$i]}"
-        local sc="${GREEN}"
+        local sc="${TC_SUCCESS}"
         case "$sig" in
-            PHASE_IN_PROGRESS) sc="${YELLOW}" ;;
-            NO_SIGNAL*|ERROR*) sc="${RED}" ;;
+            PHASE_IN_PROGRESS) sc="${TC_WARNING}" ;;
+            NO_SIGNAL*|ERROR*) sc="${TC_ERROR}" ;;
         esac
-        _mv $row 1
-        printf "  %-8s ${sc}%-22s${RESET} %-10s %-10s ${DIM}%s${RESET}" \
-            "#${HISTORY_LOOP[$i]}" "${HISTORY_SIGNAL[$i]}" "${HISTORY_TOKENS[$i]}" "${HISTORY_DURATION[$i]}" "${HISTORY_NOTE[$i]}"
-        printf "%-${pad}s" ""
-        row=$(( row + 1 ))
+        local hline="  ${TC_MUTED}#${HISTORY_LOOP[$i]}${TC_RESET}  ${sc}$(printf '%-22s' "${HISTORY_SIGNAL[$i]}")${TC_RESET}  $(printf '%-8s' "${HISTORY_TOKENS[$i]}")  $(printf '%-8s' "${HISTORY_DURATION[$i]}")  ${TC_MUTED}${HISTORY_NOTE[$i]}${TC_RESET}"
+        tput cup $cur_row 0 2>/dev/null
+        tc_draw_box_line "$hline" "$w" "$TC_NORMAL"
+        cur_row=$(( cur_row + 1 ))
+        (( hist_rows_shown++ ))
     done
 
-    # Fill remaining history space with blanks
-    local j
-    for ((j = hist_count - hist_start; j < hist_show; j++)); do
-        _mv $row 1; _line ""
-        row=$(( row + 1 ))
+    # Fill empty history rows
+    while (( hist_rows_shown < remaining_for_history )); do
+        tput cup $cur_row 0 2>/dev/null
+        tc_draw_box_line "" "$w" "$TC_NORMAL"
+        cur_row=$(( cur_row + 1 ))
+        (( hist_rows_shown++ ))
     done
 
-    # ── Blank separator ──
-    _mv $row 1; _line ""; row=$(( row + 1 ))
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_bottom "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
 
-    # ── Activity Log ──
-    pad=$((w - 12))
-    [[ "$pad" -lt 1 ]] && pad=1
-    _mv $row 1
-    printf "${BOLD}${DIM}  Activity${RESET}"
-    printf "%-${pad}s" ""
-    row=$(( row + 1 ))
+    # ── Activity Log panel — fills remaining space above footer ──
+    # Footer takes 1 row; activity panel takes the rest
+    local footer_row=$(( TUI_ROWS - 1 ))
+    local act_panel_rows=$(( footer_row - cur_row - 1 ))  # -1 for panel bottom border
+    [[ "$act_panel_rows" -lt 3 ]] && act_panel_rows=3
 
-    _mv $row 1
-    printf "${DIM}  %s${RESET}" "$(printf '─%.0s' $(seq 1 "$sep_w"))"
-    row=$(( row + 1 ))
+    # Panel title with view mode toggle hint
+    local view_hint
+    if [[ "$LOG_VIEW_MODE" == "raw" ]]; then
+        view_hint="[v] summary mode"
+    else
+        view_hint="[v] toggle raw"
+    fi
 
+    # Build right-aligned title suffix
+    local act_title="Activity Log"
+    local hint_padded="$(printf '%s' "$view_hint")"
+    local title_width=$(( w - ${#act_title} - ${#hint_padded} - 6 ))
+    [[ "$title_width" -lt 1 ]] && title_width=1
+    local act_panel_title="${act_title}$(printf '%*s' $title_width '')${hint_padded}"
+
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_top "$act_panel_title" "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    # Compute which slice of ACTIVITY_LOG to show
     local act_count=${#ACTIVITY_LOG[@]}
-    local act_start=0
-    local remaining_rows=$(( TUI_ROWS - row ))
-    local act_show=$remaining_rows
-    [[ "$act_show" -gt "$MAX_ACTIVITY" ]] && act_show=$MAX_ACTIVITY
-    [[ "$act_show" -lt 0 ]] && act_show=0
-    [[ "$act_count" -gt "$act_show" ]] && act_start=$(( act_count - act_show ))
+    local act_show=$(( act_panel_rows - 2 ))  # -2 for top+bottom borders (top already drawn)
+    # Actually act_panel_rows is the inner content rows count, so:
+    act_show=$(( act_panel_rows ))
+    [[ "$act_show" -lt 1 ]] && act_show=1
 
-    for ((i = act_start; i < act_count; i++)); do
-        local entry_len=${#ACTIVITY_LOG[$i]}
-        pad=$((w - entry_len - 4))
-        [[ "$pad" -lt 1 ]] && pad=1
-        _mv $row 1
-        printf "  ${DIM}%s${RESET}" "${ACTIVITY_LOG[$i]}"
-        printf "%-${pad}s" ""
-        row=$(( row + 1 ))
+    # Apply scroll offset
+    # offset 0 = show latest; offset N = show N lines from bottom (older entries)
+    local act_end=$(( act_count - LOG_SCROLL_OFFSET ))
+    [[ "$act_end" -lt 0 ]] && act_end=0
+    [[ "$act_end" -gt "$act_count" ]] && act_end=$act_count
+    local act_start=$(( act_end - act_show ))
+    [[ "$act_start" -lt 0 ]] && act_start=0
+
+    local shown_count=$(( act_end - act_start ))
+    local blank_before=$(( act_show - shown_count ))
+    [[ "$blank_before" -lt 0 ]] && blank_before=0
+
+    # Blank leading rows
+    local j
+    for (( j=0; j<blank_before; j++ )); do
+        tput cup $cur_row 0 2>/dev/null
+        tc_draw_box_line "" "$w" "$TC_NORMAL"
+        cur_row=$(( cur_row + 1 ))
     done
 
-    # Fill remaining rows
-    while [[ "$row" -le "$TUI_ROWS" ]]; do
-        _mv $row 1; _line ""
-        row=$(( row + 1 ))
+    for (( i=act_start; i<act_end; i++ )); do
+        tput cup $cur_row 0 2>/dev/null
+        tc_draw_box_line "  ${ACTIVITY_LOG[$i]}" "$w" "$TC_NORMAL"
+        cur_row=$(( cur_row + 1 ))
     done
 
+    tput cup $cur_row 0 2>/dev/null
+    tc_draw_box_bottom "$w" "$TC_NORMAL"
+    cur_row=$(( cur_row + 1 ))
+
+    # ── Footer ──
+    if [[ "$LOG_VIEW_MODE" == "raw" ]]; then
+        tc_draw_footer "↑↓" "Scroll log" "v" "Summary mode" "b" "Background" "q" "Back to list"
+    else
+        tc_draw_footer "↑↓" "Scroll log" "v" "Toggle raw" "b" "Background" "q" "Back to list"
+    fi
+
+    # Fill any remaining rows between activity bottom and footer
+    while (( cur_row < footer_row )); do
+        tput cup $cur_row 0 2>/dev/null
+        printf "%-${w}s" ""
+        cur_row=$(( cur_row + 1 ))
+    done
+
+    # Advance render tick for animation effects
+    TC_RENDER_TICK=$(( TC_RENDER_TICK + 1 ))
+
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────
+# Phase 3: Key handler for interactive run view
+# Called from tui_run_interactive or future tui-app.sh screen dispatch
+# ──────────────────────────────────────────────────────────────
+
+# Handler return codes (stored in _LM_KEY_ACTION):
+_LM_KEY_ACTION=""   # "background", "quit", or "" (no special action)
+
+tui_handle_key() {
+    local key="$1"
+    _LM_KEY_ACTION=""
+
+    case "$key" in
+        # Scroll up (older entries)
+        $'\x1b[A'|"k")
+            local max_offset=$(( ${#ACTIVITY_LOG[@]} ))
+            LOG_SCROLL_OFFSET=$(( LOG_SCROLL_OFFSET + 1 ))
+            [[ "$LOG_SCROLL_OFFSET" -gt "$max_offset" ]] && LOG_SCROLL_OFFSET=$max_offset
+            ;;
+        # Scroll down (newer entries)
+        $'\x1b[B'|"j")
+            LOG_SCROLL_OFFSET=$(( LOG_SCROLL_OFFSET - 1 ))
+            [[ "$LOG_SCROLL_OFFSET" -lt 0 ]] && LOG_SCROLL_OFFSET=0
+            ;;
+        # Toggle view mode
+        "v")
+            if [[ "$LOG_VIEW_MODE" == "summary" ]]; then
+                LOG_VIEW_MODE="raw"
+            else
+                LOG_VIEW_MODE="summary"
+            fi
+            # Rebuild activity log from events file for the new mode
+            _lm_rebuild_activity_log
+            ;;
+        # Detach to background
+        "b")
+            _LM_KEY_ACTION="background"
+            ;;
+        # Back to list / quit
+        "q")
+            _LM_KEY_ACTION="quit"
+            ;;
+    esac
+}
+
+# Rebuild the ACTIVITY_LOG from the current events log file (used after view mode toggle)
+_lm_rebuild_activity_log() {
+    ACTIVITY_LOG=()
+    local events_file="$_LM_CURRENT_EVENTS_LOG"
+    [[ -z "$events_file" ]] && return 0
+    [[ ! -f "$events_file" ]] && return 0
+
+    local line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        _lm_append_event_line "$line"
+    done < "$events_file"
+}
+
+# ──────────────────────────────────────────────────────────────
+# Interactive run view loop — for use from tui-app.sh or direct attach
+# Renders the run view and processes keypresses while the session is active.
+# Exits when: key 'q' (return to list), key 'b' (background), or session done.
+# Returns: 0 normally, 1 if background was requested
+# ──────────────────────────────────────────────────────────────
+tui_run_interactive() {
+    local events_log="${1:-}"
+    [[ -n "$events_log" ]] && _lm_tail_start "$events_log"
+
+    # Put terminal in raw single-char read mode
+    local old_stty
+    old_stty=$(stty -g 2>/dev/null || true)
+    stty -echo -icanon min 0 time 0 2>/dev/null || true
+
+    while true; do
+        # Drain new events from tail reader
+        _lm_drain_events && {
+            # New events arrived — auto-scroll to bottom if user hasn't scrolled up
+            [[ "$LOG_SCROLL_OFFSET" -eq 0 ]] || true
+        }
+
+        tui_render
+
+        # Non-blocking read with ~0.5s timeout
+        local key=""
+        if read -r -s -n1 -t 0.5 key 2>/dev/null; then
+            # Handle escape sequences (arrow keys)
+            if [[ "$key" == $'\x1b' ]]; then
+                local seq=""
+                read -r -s -n2 -t 0.1 seq 2>/dev/null || true
+                key="${key}${seq}"
+            fi
+            tui_handle_key "$key"
+
+            if [[ "$_LM_KEY_ACTION" == "quit" ]]; then
+                break
+            elif [[ "$_LM_KEY_ACTION" == "background" ]]; then
+                stty "$old_stty" 2>/dev/null || true
+                _lm_tail_stop
+                return 1
+            fi
+        fi
+
+        # Exit loop if session is done/error
+        if [[ "$CURRENT_STATUS" == "DONE" ]] || [[ "$CURRENT_STATUS" == "ERROR" ]]; then
+            # Give one final render, then wait for a keypress
+            tui_render
+            read -r -s -n1 2>/dev/null || true
+            break
+        fi
+    done
+
+    stty "$old_stty" 2>/dev/null || true
+    _lm_tail_stop
     return 0
 }
 
@@ -339,6 +639,7 @@ tui_set_status() {
 tui_set_loop() {
     CURRENT_LOOP="$1"
     ITER_START_TIME=$(date +%s)
+    LOG_SCROLL_OFFSET=0   # reset scroll on new loop
     tui_render
 }
 
@@ -353,17 +654,28 @@ tui_set_tokens() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# Activity log (scrolling message list)
+# Activity log — legacy push interface (used by log_success etc.)
+# These bypass the events-jsonl reader and write directly
 # ──────────────────────────────────────────────────────────────
 _activity() {
     local ts
     ts=$(date '+%H:%M:%S')
-    ACTIVITY_LOG+=("${ts}  $1")
+    local entry="${ts}  $1"
+    ACTIVITY_LOG+=("$entry")
     # Keep bounded
-    if [[ ${#ACTIVITY_LOG[@]} -gt 50 ]]; then
+    if [[ ${#ACTIVITY_LOG[@]} -gt $MAX_ACTIVITY_STORED ]]; then
         ACTIVITY_LOG=("${ACTIVITY_LOG[@]:1}")
     fi
     return 0
+}
+
+# Start the event tail reader for loop N (called from run_iteration in tarvos.sh after log init)
+tui_start_events_tail() {
+    local loop_num="$1"
+    local events_log
+    events_log=$(get_events_log "$loop_num")
+    _lm_tail_start "$events_log"
+    _LM_CURRENT_EVENTS_LOG="$events_log"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -378,22 +690,23 @@ log_iteration_header() {
     CURRENT_TOKEN_COUNT=0
     CURRENT_STATUS="RUNNING"
     CURRENT_SIGNAL=""
+    LOG_SCROLL_OFFSET=0  # reset scroll on new loop
     _activity "Loop ${loop_num} started"
     tui_render; return 0
 }
 
 log_success() {
-    _activity "OK  $1"
+    _activity "${TC_SUCCESS}✓${TC_RESET}  $1"
     tui_render; return 0
 }
 
 log_warning() {
-    _activity "!!  $1"
+    _activity "${TC_WARNING}!!${TC_RESET} $1"
     tui_render; return 0
 }
 
 log_error() {
-    _activity "ERR $1"
+    _activity "${TC_ERROR}✗${TC_RESET}  $1"
     tui_render; return 0
 }
 
@@ -512,7 +825,8 @@ log_final_summary() {
     # Print iteration history table
     echo -e "${DIM}  Iteration History:${RESET}"
     local hist_count=${#HISTORY_LOOP[@]}
-    for ((i = 0; i < hist_count; i++)); do
+    local i
+    for (( i=0; i<hist_count; i++ )); do
         local sig="${HISTORY_SIGNAL[$i]}"
         local sc="${GREEN}"
         case "$sig" in

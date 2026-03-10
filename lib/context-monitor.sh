@@ -6,6 +6,24 @@ CURRENT_INPUT_TOKENS=0
 CURRENT_OUTPUT_TOKENS=0
 CONTEXT_LIMIT_HIT=0
 
+# Events log path (set by caller via set_events_log or defaults to "")
+_CM_EVENTS_LOG=""
+
+# Set the events log file path for the current loop
+set_events_log() {
+    _CM_EVENTS_LOG="$1"
+    [[ -n "$_CM_EVENTS_LOG" ]] && > "$_CM_EVENTS_LOG"
+}
+
+# Emit a structured TUI event to the events jsonl file
+# Args: $1 = JSON object string (pre-built)
+emit_tui_event() {
+    local json="$1"
+    if [[ -n "$_CM_EVENTS_LOG" ]]; then
+        printf '%s\n' "$json" >> "$_CM_EVENTS_LOG"
+    fi
+}
+
 # Reset token counters for a new iteration
 reset_token_counters() {
     CURRENT_INPUT_TOKENS=0
@@ -68,9 +86,55 @@ process_stream() {
                 ' 2>/dev/null)
                 if [[ -n "$text" ]]; then
                     echo "$text" >> "$text_output"
+                    # Emit text event (truncated to 80 chars for events log)
+                    if [[ -n "$_CM_EVENTS_LOG" ]] && [[ -z "$is_subagent" ]]; then
+                        local brief_text="${text:0:80}"
+                        brief_text="${brief_text//$'\n'/ }"
+                        local ts
+                        ts=$(date +%s)
+                        emit_tui_event "{\"type\":\"text\",\"content\":$(printf '%s' "$brief_text" | jq -Rs '.'),\"ts\":${ts}}"
+                    fi
+                fi
+
+                # Emit tool_use events from assistant message content
+                if [[ -n "$_CM_EVENTS_LOG" ]] && [[ -z "$is_subagent" ]]; then
+                    local tool_events
+                    tool_events=$(echo "$line" | jq -c '
+                        if .message.content then
+                            .message.content[] | select(.type == "tool_use") | {type:"tool_use", tool:.name, input:((.input | tostring)[0:80]), id:.id}
+                        else
+                            empty
+                        end
+                    ' 2>/dev/null)
+                    if [[ -n "$tool_events" ]]; then
+                        local ts
+                        ts=$(date +%s)
+                        while IFS= read -r ev; do
+                            [[ -z "$ev" ]] && continue
+                            emit_tui_event "$(echo "$ev" | jq -c --argjson ts "$ts" '. + {ts:$ts}')"
+                        done <<< "$tool_events"
+                    fi
                 fi
 
                 # Only track usage from the main agent, not subagents
+                if [[ -z "$is_subagent" ]]; then
+                    extract_usage_from_line "$line" "$loop_num" "$token_limit"
+                fi
+                ;;
+
+            # Emit tool_result events
+            tool_result)
+                if [[ -n "$_CM_EVENTS_LOG" ]] && [[ -z "$is_subagent" ]]; then
+                    local ts
+                    ts=$(date +%s)
+                    local tool_id output success
+                    tool_id=$(echo "$line" | jq -r '.tool_use_id // ""' 2>/dev/null)
+                    output=$(echo "$line" | jq -r '(.content // "") | if type == "array" then .[0].text // "" else . end' 2>/dev/null)
+                    output="${output:0:80}"
+                    output="${output//$'\n'/ }"
+                    success=$(echo "$line" | jq -r 'if .is_error then "false" else "true" end' 2>/dev/null)
+                    emit_tui_event "{\"type\":\"tool_result\",\"tool_use_id\":$(printf '%s' "$tool_id" | jq -Rs '.'),\"output\":$(printf '%s' "$output" | jq -Rs '.'),\"success\":${success:-true},\"ts\":${ts}}"
+                fi
                 if [[ -z "$is_subagent" ]]; then
                     extract_usage_from_line "$line" "$loop_num" "$token_limit"
                 fi
@@ -87,6 +151,21 @@ process_stream() {
                 ' 2>/dev/null)
                 if [[ -n "$text" ]]; then
                     echo "$text" >> "$text_output"
+                    # Check for signal in result text and emit signal event
+                    if [[ -n "$_CM_EVENTS_LOG" ]]; then
+                        local sig_found=""
+                        for sig in PHASE_COMPLETE PHASE_IN_PROGRESS ALL_PHASES_COMPLETE; do
+                            if [[ "$text" == *"$sig"* ]]; then
+                                sig_found="$sig"
+                                break
+                            fi
+                        done
+                        if [[ -n "$sig_found" ]]; then
+                            local ts
+                            ts=$(date +%s)
+                            emit_tui_event "{\"type\":\"signal\",\"value\":\"${sig_found}\",\"ts\":${ts}}"
+                        fi
+                    fi
                 fi
 
                 if [[ -z "$is_subagent" ]]; then

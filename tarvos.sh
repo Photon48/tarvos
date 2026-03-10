@@ -1041,10 +1041,16 @@ run_iteration() {
     DETECTED_SIGNAL=""
     ITERATION_TOKENS=0
 
-    local raw_log text_output stderr_log
+    local raw_log text_output stderr_log events_log
     raw_log=$(get_raw_log "$loop_num")
+    events_log=$(get_events_log "$loop_num")
     text_output=$(mktemp)
     stderr_log=$(get_stderr_log "$loop_num")
+
+    # Initialize events log for this loop (enables emit_tui_event in context-monitor.sh)
+    set_events_log "$events_log"
+    # Start the TUI event tail reader so the run view receives live updates
+    tui_start_events_tail "$loop_num"
 
     # Build the prompt (pass session progress file if set)
     local prompt
