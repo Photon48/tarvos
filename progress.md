@@ -1,21 +1,17 @@
 # Progress Report
 
 ## Current Status
-Phase 4 of 5: `tarvos list` → `tarvos tui`; default detached mode
+Phase 5 of 5: Update README.md and all `usage_*` help strings
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Renamed `cmd_list`→`cmd_tui`, `usage_list`→`usage_tui`; updated `main()` dispatch (`list`→`tui`); updated `usage_begin` to remove `--continue`/`--bg`; updated `usage_root` with new lifecycle; `cmd_begin` now always detaches (bg if interactive, runs agent loop directly if non-interactive); `cmd_continue` prints TUI hint after `detach_start`; running-session prompt skips interactivity check when stdin not a tty
-- lib/detach-manager.sh: Updated `detach_start` output to include `TUI: tarvos tui` line; fixed stale `--bg` mention in `detach_attach`
-- lib/list-tui.sh: Fixed error message (`tarvos list:` → `tarvos tui:`); removed `b` key binding; removed "Start (bg)"/"Resume (bg)" actions; updated "Resume" to call `tarvos continue`; updated footer; fixed pause-after-action logic
-- tests/smoke-test.sh: Updated action arrays in test 3 to match new action sets (no more bg actions)
+- README.md: Renamed `tarvos list` → `tarvos tui` in heading and body; removed `b` key from TUI keys section; updated `begin` section (removed `--continue`/`--bg` options table, added detached-by-default note and stopped-session prompt note); added new `continue <name>` section; updated session lifecycle diagram to show `continue`/`begin`/`reject` from `stopped`; updated "How it works" to mention `tarvos tui`
 
 ## Immediate Next Task
-Begin Phase 5: Update README.md and all `usage_*` help strings. Update `### tarvos / tarvos list` heading → `tarvos tui`, remove `b` key from TUI keys section, update `### tarvos begin` section, add `### tarvos continue <name>` section, update session lifecycle diagram.
+All 5 phases are complete. No further work required.
 
 ## Key Files for Next Task
-- README.md: all sections need updating
-- tarvos.sh: `usage_root` already updated; verify `usage_begin`, `usage_continue`, `usage_tui` are accurate
+- N/A
 
 ## Gotchas
 - None

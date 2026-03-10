@@ -36,16 +36,16 @@ tarvos begin my-feature
 Write a planning document describing what you want to build — phases, sprints, milestones, a task list, whatever structure makes sense. See [`example.prd.md`](./example.prd.md) for an example.
 
 1. **`tarvos init`** reads your plan and creates a named session. `.tarvos/` is automatically added to your `.gitignore`.
-2. **`tarvos begin`** creates a git branch and an isolated worktree under `.tarvos/worktrees/<name>/`, opens a full-screen TUI, and starts the agent loop. Each iteration launches a fresh Claude Code agent. When an agent finishes a phase, a new agent picks up from there.
+2. **`tarvos begin`** creates a git branch and an isolated worktree under `.tarvos/worktrees/<name>/` and starts the agent loop in the background. Each iteration launches a fresh Claude Code agent. When an agent finishes a phase, a new agent picks up from there. Use **`tarvos tui`** to monitor all sessions.
 3. When the work is done, **`tarvos accept`** merges the branch back and archives the session. If you don't like the result, **`tarvos reject`** deletes it cleanly.
 
 ---
 
 ## Commands
 
-### `tarvos` / `tarvos list`
+### `tarvos` / `tarvos tui`
 
-Open the interactive session browser. Run `tarvos` with no arguments or `tarvos list`.
+Open the interactive session browser. Run `tarvos` with no arguments or `tarvos tui`.
 
 ```
 ╭── Sessions ──────────────────────────────── 3 sessions ───╮
@@ -58,7 +58,7 @@ Open the interactive session browser. Run `tarvos` with no arguments or `tarvos 
 [↑↓] Navigate  [Enter] Open/Actions  [s] Start  [a] Accept  [n] New  [q] Quit
 ```
 
-Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open run view or actions menu, `s` start, `b` start in background, `a` accept, `r` reject, `n` new session, `R` refresh, `q` quit.
+Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open run view or actions menu, `s` start, `a` accept, `r` reject, `n` new session, `R` refresh, `q` quit.
 
 ---
 
@@ -75,14 +75,25 @@ Previews the plan and creates a named session under `.tarvos/sessions/<name>/`.
 
 ---
 
-### `tarvos begin <name> [options]`
+### `tarvos begin <name>`
 
 Starts the agent loop for the named session. Creates a `tarvos/<name>-<timestamp>` git branch and runs the agent in an isolated worktree under `.tarvos/worktrees/<name>/`. Requires a clean working directory.
 
-| Option | Description |
-|---|---|
-| `--continue` | Resume from an existing progress checkpoint instead of starting fresh |
-| `--bg` | Run in the background (detached). Use `tarvos attach` to follow output |
+Always runs detached in the background. Use `tarvos tui` or `tarvos attach <name>` to monitor progress.
+
+If the session was previously stopped, `tarvos begin` will prompt you to confirm before discarding progress and starting fresh. Use `tarvos continue` to resume instead.
+
+---
+
+### `tarvos continue <name>`
+
+Resume a stopped session from its existing progress checkpoint. Reuses the existing git branch and worktree — no progress is lost.
+
+Always runs detached in the background. Use `tarvos tui` or `tarvos attach <name>` to monitor progress.
+
+- Only works on sessions in `stopped` status.
+- For `running` sessions, use `tarvos tui` to monitor.
+- For `initialized` sessions, use `tarvos begin` to start fresh.
 
 ---
 
@@ -121,8 +132,9 @@ Migrate a legacy Tarvos config (`.tarvos/config`) to the current session-based f
 ```
 init → begin → [running] → done → accept (merged + archived)
                                 ↘ reject (deleted)
-              → stopped → begin (resume)
-                        ↘ reject (deleted)
+              → stopped → continue (resume)
+                        ↘ begin   (reset + start fresh — prompts for confirmation)
+                        ↘ reject  (deleted)
 ```
 
 ---
