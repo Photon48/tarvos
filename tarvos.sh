@@ -137,6 +137,44 @@ EOF
     exit 0
 }
 
+usage_accept() {
+    cat <<EOF
+Usage: tarvos accept <session-name>
+
+Accept a completed session: merge its branch into the original branch,
+archive the session folder, delete the session branch, and remove it
+from the registry.
+
+Requirements:
+  - Session status must be 'done'
+  - Working directory must be clean (no uncommitted changes)
+
+Example:
+  tarvos accept auth-feature
+EOF
+    exit 0
+}
+
+usage_reject() {
+    cat <<EOF
+Usage: tarvos reject <session-name> [--force]
+
+Reject a session: delete its branch and session folder and remove it
+from the registry.
+
+Options:
+  --force     Skip confirmation prompt
+
+Requirements:
+  - Session must not be currently running (stop it first)
+
+Example:
+  tarvos reject auth-feature
+  tarvos reject auth-feature --force
+EOF
+    exit 0
+}
+
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
@@ -149,6 +187,8 @@ Commands:
   attach <name>                   Follow live output of a background session
   stop <name>                     Stop a running background session
   list                            Show all sessions (interactive TUI)
+  accept <name>                   Merge completed session branch and archive
+  reject <name> [--force]         Delete session branch and remove session
 
 Run \`tarvos <command> --help\` for command-specific options.
 EOF
@@ -596,6 +636,196 @@ cmd_list() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# tarvos accept — merge session branch and archive session
+# ──────────────────────────────────────────────────────────────
+cmd_accept() {
+    local session_name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_accept ;;
+            -*)
+                echo "tarvos accept: unknown option: $1" >&2
+                usage_accept
+                ;;
+            *)
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos accept: unexpected argument: $1" >&2
+                    usage_accept
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos accept: missing required argument <session-name>" >&2
+        usage_accept
+    fi
+
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/branch-manager.sh"
+
+    if ! session_exists "$session_name"; then
+        echo "tarvos accept: session '${session_name}' not found." >&2
+        exit 1
+    fi
+
+    session_load "$session_name" || exit 1
+
+    # 1. Validate session status is 'done'
+    if [[ "$SESSION_STATUS" != "done" ]]; then
+        echo "tarvos accept: session '${session_name}' is not done (status: ${SESSION_STATUS})." >&2
+        if [[ "$SESSION_STATUS" == "running" ]]; then
+            echo "  Stop the session first: tarvos stop ${session_name}" >&2
+        fi
+        exit 1
+    fi
+
+    # 2. Ensure working directory is clean
+    if ! branch_ensure_clean; then
+        exit 1
+    fi
+
+    local source_branch="$SESSION_BRANCH"
+    local target_branch="$SESSION_ORIGINAL_BRANCH"
+
+    if [[ -z "$source_branch" ]]; then
+        echo "tarvos accept: session '${session_name}' has no associated branch." >&2
+        exit 1
+    fi
+
+    if [[ -z "$target_branch" ]]; then
+        echo "tarvos accept: session '${session_name}' has no original branch recorded." >&2
+        exit 1
+    fi
+
+    echo "Accepting session '${session_name}'..."
+    echo "  Merging '${source_branch}' → '${target_branch}'"
+
+    # 4. Attempt merge (branch_merge checks out target and merges source)
+    if ! branch_merge "$source_branch" "$target_branch"; then
+        # branch_merge already printed resolution instructions
+        exit 1
+    fi
+
+    echo "  Merge successful."
+
+    # 5. Archive session folder
+    echo "  Archiving session..."
+    session_archive "$session_name"
+
+    # 6. Delete session branch
+    echo "  Deleting branch '${source_branch}'..."
+    branch_delete "$source_branch"
+
+    # (registry_remove is already called by session_archive)
+
+    echo ""
+    echo "Session '${session_name}' accepted and merged into '${target_branch}'."
+    echo "Session archived to .tarvos/archive/${session_name}-*/"
+}
+
+# ──────────────────────────────────────────────────────────────
+# tarvos reject — delete session branch and folder
+# ──────────────────────────────────────────────────────────────
+cmd_reject() {
+    local session_name=""
+    local force=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_reject ;;
+            --force)   force=1; shift ;;
+            -*)
+                echo "tarvos reject: unknown option: $1" >&2
+                usage_reject
+                ;;
+            *)
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos reject: unexpected argument: $1" >&2
+                    usage_reject
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos reject: missing required argument <session-name>" >&2
+        usage_reject
+    fi
+
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/branch-manager.sh"
+
+    if ! session_exists "$session_name"; then
+        echo "tarvos reject: session '${session_name}' not found." >&2
+        exit 1
+    fi
+
+    session_load "$session_name" || exit 1
+
+    # 2. Error if session is running
+    if [[ "$SESSION_STATUS" == "running" ]]; then
+        echo "tarvos reject: session '${session_name}' is currently running." >&2
+        echo "  Stop it first: tarvos stop ${session_name}" >&2
+        exit 1
+    fi
+
+    # 1. Prompt confirmation unless --force
+    if (( ! force )); then
+        local branch_info=""
+        if [[ -n "$SESSION_BRANCH" ]]; then
+            branch_info=" (branch: ${SESSION_BRANCH})"
+        fi
+        echo "Reject session '${session_name}'${branch_info}?"
+        echo "  This will delete the session branch and all session data."
+        printf "  Type 'yes' to confirm: "
+        local confirm
+        IFS= read -r confirm
+        if [[ "$confirm" != "yes" ]]; then
+            echo "Rejection cancelled."
+            exit 0
+        fi
+    fi
+
+    echo "Rejecting session '${session_name}'..."
+
+    # 3. Delete session branch (if exists)
+    if [[ -n "$SESSION_BRANCH" ]]; then
+        # Switch away from the session branch if we're on it
+        local current_branch
+        current_branch=$(branch_get_current 2>/dev/null || true)
+        if [[ "$current_branch" == "$SESSION_BRANCH" ]]; then
+            local fallback_branch="${SESSION_ORIGINAL_BRANCH:-main}"
+            echo "  Switching to '${fallback_branch}' before deleting branch..."
+            if ! git checkout "$fallback_branch" 2>/dev/null; then
+                # Fallback: try main, master, or any existing branch
+                local any_branch
+                any_branch=$(git branch --format='%(refname:short)' | grep -v "^${SESSION_BRANCH}$" | head -1 2>/dev/null || true)
+                if [[ -n "$any_branch" ]]; then
+                    git checkout "$any_branch" 2>/dev/null || true
+                fi
+            fi
+        fi
+        echo "  Deleting branch '${SESSION_BRANCH}'..."
+        branch_delete "$SESSION_BRANCH" || true
+    fi
+
+    # 4. Delete session folder and remove from registry
+    echo "  Removing session data..."
+    session_delete "$session_name"
+
+    echo ""
+    echo "Session '${session_name}' rejected and removed."
+}
+
+# ──────────────────────────────────────────────────────────────
 # Clean shutdown: kill claude, restore terminal, exit
 # CURRENT_SESSION_NAME is set by cmd_begin before run_agent_loop
 # ──────────────────────────────────────────────────────────────
@@ -926,6 +1156,8 @@ main() {
         attach) cmd_attach "$@" ;;
         stop)   cmd_stop "$@" ;;
         list)   cmd_list "$@" ;;
+        accept) cmd_accept "$@" ;;
+        reject) cmd_reject "$@" ;;
         -h|--help) usage_root ;;
         *)
             echo "tarvos: unknown command: ${cmd}" >&2
