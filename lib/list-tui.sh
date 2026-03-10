@@ -265,7 +265,6 @@ _list_render() {
         "↑↓" "Navigate" \
         "Enter" "Open/Actions" \
         "s" "Start" \
-        "b" "Start (bg)" \
         "a" "Accept" \
         "r" "Reject" \
         "n" "New" \
@@ -285,9 +284,9 @@ _list_show_overlay() {
     local -a actions=()
     case "$status" in
         running)     actions=("Attach" "Stop") ;;
-        stopped)     actions=("Resume" "Resume (bg)" "Reject") ;;
+        stopped)     actions=("Resume" "Reject") ;;
         done)        actions=("Accept" "Reject" "View Summary") ;;
-        initialized) actions=("Start" "Start (bg)" "Reject") ;;
+        initialized) actions=("Start" "Reject") ;;
         failed)      actions=("Reject") ;;
         *)           actions=("Reject") ;;
     esac
@@ -403,16 +402,10 @@ _list_execute_action() {
             "$tarvos_script" stop "$name"
             ;;
         "Resume")
-            "$tarvos_script" begin "$name" --continue
-            ;;
-        "Resume (bg)")
-            "$tarvos_script" begin "$name" --continue --bg
+            "$tarvos_script" continue "$name"
             ;;
         "Start")
             "$tarvos_script" begin "$name"
-            ;;
-        "Start (bg)")
-            "$tarvos_script" begin "$name" --bg
             ;;
         "Accept")
             "$tarvos_script" accept "$name"
@@ -432,8 +425,8 @@ _list_execute_action() {
             ;;
     esac
 
-    # After action, pause briefly then re-enter TUI
-    if [[ "$action" != "Attach" && "$action" != "Start" && "$action" != "Resume" ]]; then
+    # After action, pause briefly then re-enter TUI (Attach takes over the terminal, skip)
+    if [[ "$action" != "Attach" ]]; then
         echo ""
         printf '%b' "${TC_MUTED}Press any key to return to session list, or q to quit.${TC_RESET}\n"
         local key=""
@@ -508,7 +501,7 @@ list_tui_run() {
     local tarvos_script="${1:-tarvos}"
 
     if ! command -v jq &>/dev/null; then
-        echo "tarvos list: jq is required but not installed." >&2
+        echo "tarvos tui: jq is required but not installed." >&2
         return 1
     fi
 
@@ -594,24 +587,6 @@ list_tui_run() {
                     local sel_status="${_LIST_STATUSES[$_LIST_SEL]}"
                     if [[ "$sel_status" == "initialized" ]]; then
                         _list_execute_action "$sel_name" "Start" "$tarvos_script" || break
-                        _list_load_sessions
-                        _list_tui_start
-                    fi
-                fi
-                ;;
-
-            b)
-                # Start selected session in background
-                if (( count > 0 )); then
-                    local sel_name="${_LIST_NAMES[$_LIST_SEL]}"
-                    local sel_status="${_LIST_STATUSES[$_LIST_SEL]}"
-                    local bg_action=""
-                    case "$sel_status" in
-                        initialized) bg_action="Start (bg)" ;;
-                        stopped)     bg_action="Resume (bg)" ;;
-                    esac
-                    if [[ -n "$bg_action" ]]; then
-                        _list_execute_action "$sel_name" "$bg_action" "$tarvos_script" || break
                         _list_load_sessions
                         _list_tui_start
                     fi

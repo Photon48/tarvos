@@ -8,8 +8,9 @@ set -uo pipefail
 # Each agent works on one phase, then hands off to a fresh agent via progress.md
 #
 # Usage:
-#   tarvos init <prd-path> [--token-limit N] [--max-loops N]
-#   tarvos begin [--continue]
+#   tarvos init <prd-path> --name <name> [--token-limit N] [--max-loops N]
+#   tarvos begin <name>
+#   tarvos continue <name>
 
 # Resolve script directory (where lib/ and protocol live)
 # Dereference symlinks so SCRIPT_DIR always points to the real repo directory,
@@ -66,25 +67,20 @@ EOF
 
 usage_begin() {
     cat <<EOF
-Usage: tarvos begin <session-name> [options]
+Usage: tarvos begin <session-name>
 
 Options:
-  --continue          Resume from existing progress.md instead of starting fresh
-  --bg                Run session in background (detached mode)
   -h, --help          Show this help message
 
 Behavior:
   - Requires a clean working directory (no uncommitted changes).
   - On first run: creates a 'tarvos/<name>-<timestamp>' branch in an isolated
                   git worktree under .tarvos/worktrees/<name>/.
-  - On resume:    reuses the existing worktree (or recreates it from the branch).
-  - With --bg:    starts the session as a background process (nohup).
-                  Use 'tarvos attach <name>' to follow live output.
+  - Always starts the session as a background process (detached mode).
+  - Use 'tarvos tui' or 'tarvos attach <name>' to monitor progress.
 
 Example:
   tarvos begin auth-feature
-  tarvos begin auth-feature --continue
-  tarvos begin auth-feature --bg
 
 Run \`tarvos init <prd-path> --name <name>\` first to create a session.
 EOF
@@ -137,9 +133,9 @@ EOF
     exit 0
 }
 
-usage_list() {
+usage_tui() {
     cat <<EOF
-Usage: tarvos list
+Usage: tarvos tui
 
 Open the interactive session browser (also: run 'tarvos' with no arguments).
 
@@ -148,7 +144,6 @@ Keys:
   ↓ / j    Move selection down
   Enter     Open run view (running sessions) or actions menu
   s         Start selected initialized session
-  b         Start selected session in background
   a         Accept selected done session
   r         Reject selected session
   n         New session (prompts for name + PRD path)
@@ -157,9 +152,9 @@ Keys:
 
 Actions menu (context-aware per session status):
   running     → Attach, Stop
-  stopped     → Resume, Resume (bg), Reject
+  stopped     → Resume, Reject
   done        → Accept, Reject, View Summary
-  initialized → Start, Start (bg), Reject
+  initialized → Start, Reject
   failed      → Reject
 EOF
     exit 0
@@ -233,26 +228,26 @@ up where the last left off. Every session runs on its own isolated git worktree
 
 Commands:
   init <prd-path> --name <name>   Create a new session
-  begin <name>                    Run session agent loop
-  begin <name> --continue         Resume from existing progress checkpoint
-  begin <name> --bg               Run session in the background (detached)
+  begin <name>                    Start session agent loop (always detached)
+  continue <name>                 Resume a stopped session from progress checkpoint
   attach <name>                   Follow live output of a background session
   stop <name>                     Stop a running background session
-  list                            Open the session browser TUI
+  tui                             Open the session browser TUI
   accept <name>                   Merge completed session branch and archive
   reject <name> [--force]         Delete session branch and remove session
   migrate                         Migrate legacy .tarvos/config to session format
 
 Session lifecycle:
-  init → begin → done → accept   (branch merged, session archived)
-                      ↘ reject   (branch + session deleted)
-         begin → stopped → begin  (resume later)
-                         ↘ reject
+  init → begin → [running] → done → accept   (branch merged, session archived)
+                                   ↘ reject  (branch + session deleted)
+              → stopped → continue (resume from progress checkpoint)
+                         ↘ begin   (reset + start fresh — prompts for confirmation)
+                         ↘ reject  (deleted)
 
 Session status values:
   initialized   Created, not yet started
   running       Agent loop is active
-  stopped       Paused (can be resumed with begin)
+  stopped       Paused (can be resumed with continue)
   done          All phases complete (ready to accept or reject)
   failed        Exceeded retries or hit an unrecoverable error
 
@@ -538,39 +533,45 @@ cmd_begin() {
             exit 1
             ;;
         running)
-            echo "Session '${session_name}' is currently running."
-            printf "Would you like to reset and restart the implementation? [y/N]: "
-            local running_answer
-            IFS= read -r running_answer </dev/tty
-            case "$running_answer" in
-                y|Y)
-                    echo "Stopping and resetting session '${session_name}'..."
+            # If stdin is not a tty (i.e., called from a detach wrapper), go straight
+            # to the agent loop — the session was already set up by the foreground call.
+            if [[ ! -t 0 ]]; then
+                : # fall through to agent loop below
+            else
+                echo "Session '${session_name}' is currently running."
+                printf "Would you like to reset and restart the implementation? [y/N]: "
+                local running_answer
+                IFS= read -r running_answer </dev/tty
+                case "$running_answer" in
+                    y|Y)
+                        echo "Stopping and resetting session '${session_name}'..."
 
-                    local saved_prd_running="$SESSION_PRD_FILE"
-                    local saved_token_limit_running="$SESSION_TOKEN_LIMIT"
-                    local saved_max_loops_running="$SESSION_MAX_LOOPS"
+                        local saved_prd_running="$SESSION_PRD_FILE"
+                        local saved_token_limit_running="$SESSION_TOKEN_LIMIT"
+                        local saved_max_loops_running="$SESSION_MAX_LOOPS"
 
-                    # Stop the background process if it has a PID file
-                    if detach_is_running "$session_name"; then
-                        detach_stop "$session_name" || true
-                    fi
+                        # Stop the background process if it has a PID file
+                        if detach_is_running "$session_name"; then
+                            detach_stop "$session_name" || true
+                        fi
 
-                    _tarvos_reject_force "$session_name"
+                        _tarvos_reject_force "$session_name"
 
-                    if ! _tarvos_reinit_session "$saved_prd_running" "$session_name" "$saved_token_limit_running" "$saved_max_loops_running"; then
-                        echo "tarvos begin: failed to re-initialize session '${session_name}'." >&2
-                        exit 1
-                    fi
+                        if ! _tarvos_reinit_session "$saved_prd_running" "$session_name" "$saved_token_limit_running" "$saved_max_loops_running"; then
+                            echo "tarvos begin: failed to re-initialize session '${session_name}'." >&2
+                            exit 1
+                        fi
 
-                    # Reload so SESSION_STATUS is now "initialized"; branch+worktree
-                    # creation is handled by the normal initialized path below.
-                    session_load "$session_name" || exit 1
-                    ;;
-                *)
-                    echo "View it in the TUI: tarvos tui"
-                    exit 0
-                    ;;
-            esac
+                        # Reload so SESSION_STATUS is now "initialized"; branch+worktree
+                        # creation is handled by the normal initialized path below.
+                        session_load "$session_name" || exit 1
+                        ;;
+                    *)
+                        echo "View it in the TUI: tarvos tui"
+                        exit 0
+                        ;;
+                esac
+            fi
             ;;
         failed)
             echo "tarvos begin: session '${session_name}' has failed. Use \`tarvos reject\` to remove it." >&2
@@ -632,60 +633,70 @@ cmd_begin() {
         # Reload so all SESSION_* vars are current
         session_load "$session_name"
     else
-        # Stopped session — safety prompt before discarding in-progress work
-        echo "Session '${session_name}' has an implementation in progress."
-        echo "Starting fresh will discard all existing progress and reset the implementation."
-        printf "Are you sure you want to start over? [y/N]: "
-        local restart_answer
-        IFS= read -r restart_answer </dev/tty
-        case "$restart_answer" in
-            y|Y)
-                # User confirmed: reject old session and re-init with same settings
-                echo "Resetting session '${session_name}'..."
+        # Stopped session
+        if [[ ! -t 0 ]]; then
+            # Non-interactive (background detach): resume in-progress work directly
+            # (worktree and branch already exist — use SESSION_WORKTREE_PATH)
+            if [[ -n "${SESSION_WORKTREE_PATH:-}" ]]; then
+                WORKTREE_PATH="$SESSION_WORKTREE_PATH"
+            fi
+            continue_mode=1
+        else
+            # Interactive — safety prompt before discarding in-progress work
+            echo "Session '${session_name}' has an implementation in progress."
+            echo "Starting fresh will discard all existing progress and reset the implementation."
+            printf "Are you sure you want to start over? [y/N]: "
+            local restart_answer
+            IFS= read -r restart_answer </dev/tty
+            case "$restart_answer" in
+                y|Y)
+                    # User confirmed: reject old session and re-init with same settings
+                    echo "Resetting session '${session_name}'..."
 
-                local saved_prd="$SESSION_PRD_FILE"
-                local saved_token_limit="$SESSION_TOKEN_LIMIT"
-                local saved_max_loops="$SESSION_MAX_LOOPS"
+                    local saved_prd="$SESSION_PRD_FILE"
+                    local saved_token_limit="$SESSION_TOKEN_LIMIT"
+                    local saved_max_loops="$SESSION_MAX_LOOPS"
 
-                _tarvos_reject_force "$session_name"
+                    _tarvos_reject_force "$session_name"
 
-                if ! _tarvos_reinit_session "$saved_prd" "$session_name" "$saved_token_limit" "$saved_max_loops"; then
-                    echo "tarvos begin: failed to re-initialize session '${session_name}'." >&2
-                    exit 1
-                fi
+                    if ! _tarvos_reinit_session "$saved_prd" "$session_name" "$saved_token_limit" "$saved_max_loops"; then
+                        echo "tarvos begin: failed to re-initialize session '${session_name}'." >&2
+                        exit 1
+                    fi
 
-                # Reload freshly created session and create branch + worktree (same as initialized path)
-                session_load "$session_name" || exit 1
+                    # Reload freshly created session and create branch + worktree (same as initialized path)
+                    session_load "$session_name" || exit 1
 
-                local original_branch
-                if ! original_branch=$(branch_get_current); then
-                    exit 1
-                fi
+                    local original_branch
+                    if ! original_branch=$(branch_get_current); then
+                        exit 1
+                    fi
 
-                local new_branch
-                if ! new_branch=$(branch_create "$session_name"); then
-                    exit 1
-                fi
+                    local new_branch
+                    if ! new_branch=$(branch_create "$session_name"); then
+                        exit 1
+                    fi
 
-                echo "tarvos: created branch '${new_branch}'"
-                session_set_branch "$session_name" "$new_branch" "$original_branch"
+                    echo "tarvos: created branch '${new_branch}'"
+                    session_set_branch "$session_name" "$new_branch" "$original_branch"
 
-                local abs_wt_path
-                if ! abs_wt_path=$(worktree_create "$session_name" "$new_branch"); then
-                    echo "tarvos: failed to create worktree for session '${session_name}'." >&2
-                    exit 1
-                fi
+                    local abs_wt_path
+                    if ! abs_wt_path=$(worktree_create "$session_name" "$new_branch"); then
+                        echo "tarvos: failed to create worktree for session '${session_name}'." >&2
+                        exit 1
+                    fi
 
-                echo "tarvos: worktree at '$(worktree_path "${session_name}")'"
-                session_set_worktree_path "$session_name" "$abs_wt_path"
-                WORKTREE_PATH="$abs_wt_path"
-                session_load "$session_name"
-                ;;
-            *)
-                echo "Use 'tarvos continue ${session_name}' to resume where it left off."
-                exit 0
-                ;;
-        esac
+                    echo "tarvos: worktree at '$(worktree_path "${session_name}")'"
+                    session_set_worktree_path "$session_name" "$abs_wt_path"
+                    WORKTREE_PATH="$abs_wt_path"
+                    session_load "$session_name"
+                    ;;
+                *)
+                    echo "Use 'tarvos continue ${session_name}' to resume where it left off."
+                    exit 0
+                    ;;
+            esac
+        fi
     fi
 
     # Protocol file (SKILL.md in the tarvos-skill folder)
@@ -703,22 +714,39 @@ cmd_begin() {
         PROJECT_DIR="$(pwd)"
     fi
 
-    # ── Foreground mode ─────────────────────────────────────────
-    # Source library modules (now that we know everything is valid)
-    source "${SCRIPT_DIR}/lib/log-manager.sh"
-    source "${SCRIPT_DIR}/lib/prompt-builder.sh"
-    source "${SCRIPT_DIR}/lib/signal-detector.sh"
-    source "${SCRIPT_DIR}/lib/context-monitor.sh"
-    source "${SCRIPT_DIR}/lib/summary-generator.sh"
+    # ── Detached (background) mode ──────────────────────────────
+    # If we're already in a non-interactive/background context (stdin not a tty),
+    # run the agent loop directly in this process (we ARE the background worker).
+    if [[ ! -t 0 ]]; then
+        # Source library modules
+        source "${SCRIPT_DIR}/lib/log-manager.sh"
+        source "${SCRIPT_DIR}/lib/prompt-builder.sh"
+        source "${SCRIPT_DIR}/lib/signal-detector.sh"
+        source "${SCRIPT_DIR}/lib/context-monitor.sh"
+        source "${SCRIPT_DIR}/lib/summary-generator.sh"
 
-    # Mark session as running
-    session_set_status "$session_name" "running"
-    session_mark_started "$session_name"
+        # Mark session as running
+        session_set_status "$session_name" "running"
+        session_mark_started "$session_name"
 
-    # ── Run the agent loop ──────────────────────────────────────
-    CONTINUE_MODE="$continue_mode"
-    CURRENT_SESSION_NAME="$session_name"
-    run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE" "$session_name"
+        # Run the agent loop
+        CONTINUE_MODE="$continue_mode"
+        CURRENT_SESSION_NAME="$session_name"
+        run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE" "$session_name"
+    else
+        # Interactive foreground call: mark running and launch detached background process
+        session_set_status "$session_name" "running"
+        session_mark_started "$session_name"
+
+        detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR"
+        echo ""
+        echo "View progress in the TUI:"
+        echo "  tarvos tui"
+        echo ""
+        echo "Or tail the raw log:"
+        echo "  tarvos attach ${session_name}"
+        exit 0
+    fi
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -859,6 +887,12 @@ cmd_continue() {
     # Always run detached — background tarvos begin will handle status transition
     # and pick up continue_mode=1 automatically (stopped sessions always resume)
     detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR"
+    echo ""
+    echo "View progress in the TUI:"
+    echo "  tarvos tui"
+    echo ""
+    echo "Or tail the raw log:"
+    echo "  tarvos attach ${session_name}"
     exit 0
 }
 
@@ -967,15 +1001,15 @@ cmd_stop() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# tarvos list — interactive session list TUI
+# tarvos tui — interactive session list TUI
 # ──────────────────────────────────────────────────────────────
-cmd_list() {
+cmd_tui() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) usage_list ;;
+            -h|--help) usage_tui ;;
             *)
-                echo "tarvos list: unexpected argument: $1" >&2
-                usage_list
+                echo "tarvos tui: unexpected argument: $1" >&2
+                usage_tui
                 ;;
         esac
     done
@@ -1636,7 +1670,7 @@ main() {
         continue) cmd_continue "$@" ;;
         attach)   cmd_attach "$@" ;;
         stop)     cmd_stop "$@" ;;
-        list)     cmd_list "$@" ;;
+        tui)      cmd_tui "$@" ;;
         accept)   cmd_accept "$@" ;;
         reject)   cmd_reject "$@" ;;
         migrate)  cmd_migrate "$@" ;;

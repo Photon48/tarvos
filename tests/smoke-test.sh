@@ -217,9 +217,9 @@ _test_action_overlay_actions() {
             local actions=()
             case \"\$status\" in
                 running)     actions=(\"Attach\" \"Stop\") ;;
-                stopped)     actions=(\"Resume\" \"Resume (bg)\" \"Reject\") ;;
+                stopped)     actions=(\"Resume\" \"Reject\") ;;
                 done)        actions=(\"Accept\" \"Reject\" \"View Summary\") ;;
-                initialized) actions=(\"Start\" \"Start (bg)\" \"Reject\") ;;
+                initialized) actions=(\"Start\" \"Reject\") ;;
                 failed)      actions=(\"Reject\") ;;
             esac
             local ok=1

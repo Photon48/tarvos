@@ -152,7 +152,8 @@ WRAPPER_EOF
     echo "$bg_pid" > "$pid_file"
 
     echo "Session '${name}' started in background (PID: ${bg_pid})"
-    echo "  Log: ${output_log}"
+    echo "  Log:    ${output_log}"
+    echo "  TUI:    tarvos tui"
     echo "  Attach: tarvos attach ${name}"
 
     return 0
@@ -181,7 +182,7 @@ detach_attach() {
 
     if [[ ! -f "$output_log" ]]; then
         echo "tarvos: no output log found for session '${name}'." >&2
-        echo "  The session may not have been started with --bg." >&2
+        echo "  The session may not have been started in background mode." >&2
         return 1
     fi
 
