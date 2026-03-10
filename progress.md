@@ -1,21 +1,20 @@
 # Progress Report
 
 ## Current Status
-Phase 2 of 5: `tarvos begin` safety prompt for `stopped` sessions
+Phase 3 of 5: `tarvos begin` safety prompt for `running` sessions
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Added `_tarvos_reject_force` helper (worktree remove, branch delete, session delete; uses SESSION_BRANCH global)
-- tarvos.sh: Added `_tarvos_reinit_session` helper (calls session_init only)
-- tarvos.sh: Replaced stopped-session auto-continue block in `cmd_begin` with interactive safety prompt [y/N]; y → reject+reinit+new branch+worktree; n/Enter → exit with tarvos continue hint
+- tarvos.sh: Replaced hard error for `running` sessions in `cmd_begin` with interactive [y/N] prompt; y → detach_stop (if PID exists) + _tarvos_reject_force + _tarvos_reinit_session + session_load (status → initialized, falls into normal initialized path for branch+worktree); n/Enter → exit with `View it in the TUI: tarvos tui`
 
 ## Immediate Next Task
-Begin Phase 3: Replace the hard error for `running` sessions in `cmd_begin` with an interactive [y/N] prompt. On y: detach_stop if PID file exists, then _tarvos_reject_force, _tarvos_reinit_session, start fresh.
+Begin Phase 4: Rename `cmd_list`→`cmd_tui`, `usage_list`→`usage_tui`, update `main()` dispatch (list→tui), update detach_start output in detach-manager.sh to reference `tarvos tui`, fix list-tui.sh line 511 error message.
 
 ## Key Files for Next Task
-- tarvos.sh: `cmd_begin` case block for `running` status (~line 536-543)
-- tarvos.sh: `_tarvos_reject_force` and `_tarvos_reinit_session` (already added, ~line 447-480)
+- tarvos.sh: `cmd_list`, `usage_list`, `main()` dispatch
+- lib/detach-manager.sh: `detach_start` output lines (~152-154)
+- lib/list-tui.sh: line 511 error message
 
 ## Gotchas
-- Phase 3: for foreground (no PID file) sessions, skip detach_stop and go straight to _tarvos_reject_force
-- Phase 4 adds actual detach_start to cmd_begin — Phase 3 "start fresh detached" still uses current foreground path for now
+- Phase 4 also removes --bg/--fg flags from cmd_begin and cmd_continue; always calls detach_start
+- After detach_start, print: "Session '...' started in background (PID: ...).\n\nView progress in the TUI:\n  tarvos tui\n\nOr tail the raw log:\n  tarvos attach <name>"

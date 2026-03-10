@@ -538,8 +538,39 @@ cmd_begin() {
             exit 1
             ;;
         running)
-            echo "tarvos begin: session '${session_name}' is already running." >&2
-            exit 1
+            echo "Session '${session_name}' is currently running."
+            printf "Would you like to reset and restart the implementation? [y/N]: "
+            local running_answer
+            IFS= read -r running_answer </dev/tty
+            case "$running_answer" in
+                y|Y)
+                    echo "Stopping and resetting session '${session_name}'..."
+
+                    local saved_prd_running="$SESSION_PRD_FILE"
+                    local saved_token_limit_running="$SESSION_TOKEN_LIMIT"
+                    local saved_max_loops_running="$SESSION_MAX_LOOPS"
+
+                    # Stop the background process if it has a PID file
+                    if detach_is_running "$session_name"; then
+                        detach_stop "$session_name" || true
+                    fi
+
+                    _tarvos_reject_force "$session_name"
+
+                    if ! _tarvos_reinit_session "$saved_prd_running" "$session_name" "$saved_token_limit_running" "$saved_max_loops_running"; then
+                        echo "tarvos begin: failed to re-initialize session '${session_name}'." >&2
+                        exit 1
+                    fi
+
+                    # Reload so SESSION_STATUS is now "initialized"; branch+worktree
+                    # creation is handled by the normal initialized path below.
+                    session_load "$session_name" || exit 1
+                    ;;
+                *)
+                    echo "View it in the TUI: tarvos tui"
+                    exit 0
+                    ;;
+            esac
             ;;
         failed)
             echo "tarvos begin: session '${session_name}' has failed. Use \`tarvos reject\` to remove it." >&2
