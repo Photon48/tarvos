@@ -175,6 +175,25 @@ EOF
     exit 0
 }
 
+usage_migrate() {
+    cat <<EOF
+Usage: tarvos migrate
+
+Migrate a legacy Tarvos configuration (.tarvos/config) to the session-based
+format introduced in the async ecosystem update.
+
+What it does:
+  - Reads PRD_FILE, TOKEN_LIMIT, and MAX_LOOPS from .tarvos/config
+  - Creates a session named "default" in .tarvos/sessions/default/
+  - Moves progress.md (if it exists) into the session folder
+  - Archives the old config to .tarvos/config.bak
+
+Example:
+  tarvos migrate
+EOF
+    exit 0
+}
+
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
@@ -189,6 +208,7 @@ Commands:
   list                            Show all sessions (interactive TUI)
   accept <name>                   Merge completed session branch and archive
   reject <name> [--force]         Delete session branch and remove session
+  migrate                         Migrate legacy .tarvos/config to session format
 
 Run \`tarvos <command> --help\` for command-specific options.
 EOF
@@ -826,6 +846,114 @@ cmd_reject() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# tarvos migrate — migrate legacy .tarvos/config to session format
+# ──────────────────────────────────────────────────────────────
+cmd_migrate() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_migrate ;;
+            *)
+                echo "tarvos migrate: unexpected argument: $1" >&2
+                usage_migrate
+                ;;
+        esac
+    done
+
+    local BOLD='\033[1m' RESET='\033[0m' GREEN='\033[0;32m' YELLOW='\033[1;33m' DIM='\033[2m'
+
+    # Detect legacy config
+    local legacy_config=".tarvos/config"
+    if [[ ! -f "$legacy_config" ]]; then
+        echo "tarvos migrate: no legacy config found at ${legacy_config}." >&2
+        if [[ -d ".tarvos/sessions" ]]; then
+            echo "  Your project already uses the session-based format." >&2
+        fi
+        exit 1
+    fi
+
+    # Check that sessions folder doesn't already contain a "default" session
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    if session_exists "default"; then
+        echo "tarvos migrate: a session named 'default' already exists." >&2
+        echo "  Please rename or remove it before migrating." >&2
+        exit 1
+    fi
+
+    echo -e "${BOLD}Tarvos — Migrating legacy configuration${RESET}"
+    echo ""
+
+    # Read KEY=VALUE pairs from legacy config
+    local prd_file="" token_limit="$DEFAULT_TOKEN_LIMIT" max_loops="$DEFAULT_MAX_LOOPS"
+    local key value
+    while IFS='=' read -r key value; do
+        # Skip blank lines and comments
+        [[ -z "$key" || "$key" =~ ^# ]] && continue
+        case "$key" in
+            PRD_FILE)    prd_file="$value" ;;
+            TOKEN_LIMIT) token_limit="$value" ;;
+            MAX_LOOPS)   max_loops="$value" ;;
+        esac
+    done < "$legacy_config"
+
+    if [[ -z "$prd_file" ]]; then
+        echo "tarvos migrate: legacy config is missing PRD_FILE." >&2
+        exit 1
+    fi
+
+    if [[ ! -f "$prd_file" ]]; then
+        echo "tarvos migrate: PRD file from legacy config not found: ${prd_file}" >&2
+        echo "  Update the path in ${legacy_config} before migrating." >&2
+        exit 1
+    fi
+
+    echo -e "  ${BOLD}Legacy config:${RESET}  ${legacy_config}"
+    echo -e "  ${BOLD}PRD file:${RESET}       ${prd_file}"
+    echo -e "  ${BOLD}Token limit:${RESET}    ${token_limit}"
+    echo -e "  ${BOLD}Max loops:${RESET}      ${max_loops}"
+    echo ""
+
+    # Validate jq is available
+    if ! command -v jq &>/dev/null; then
+        echo "tarvos migrate: jq is required but not installed. Install with: brew install jq" >&2
+        exit 1
+    fi
+
+    mkdir -p "$TARVOS_DIR"
+
+    # Create the "default" session
+    echo -e "  ${DIM}Creating session 'default'...${RESET}"
+    if ! session_init "default" "$prd_file" "$token_limit" "$max_loops"; then
+        exit 1
+    fi
+
+    # Move progress.md into the session folder (if it exists in project root)
+    local project_dir
+    project_dir="$(pwd)"
+    local old_progress="${project_dir}/progress.md"
+    local new_progress="${SESSIONS_DIR}/default/progress.md"
+
+    if [[ -f "$old_progress" ]]; then
+        echo -e "  ${DIM}Moving progress.md to session folder...${RESET}"
+        mv "$old_progress" "$new_progress"
+    fi
+
+    # Archive old config
+    echo -e "  ${DIM}Archiving legacy config to .tarvos/config.bak...${RESET}"
+    mv "$legacy_config" "${legacy_config}.bak"
+
+    echo ""
+    echo -e "  ${GREEN}${BOLD}Migration complete.${RESET}"
+    echo -e "  Session 'default' created at: .tarvos/sessions/default/"
+    if [[ -f "$new_progress" ]]; then
+        echo -e "  Progress report moved to: .tarvos/sessions/default/progress.md"
+    fi
+    echo -e "  Legacy config backed up to: .tarvos/config.bak"
+    echo ""
+    echo -e "  Run ${BOLD}tarvos begin default${RESET} to continue where you left off."
+    echo ""
+}
+
+# ──────────────────────────────────────────────────────────────
 # Clean shutdown: kill claude, restore terminal, exit
 # CURRENT_SESSION_NAME is set by cmd_begin before run_agent_loop
 # ──────────────────────────────────────────────────────────────
@@ -908,7 +1036,7 @@ run_iteration() {
         tui_set_status "CONTINUATION"
         tui_set_phase_info "Writing progress.md (continuation)..."
         local continuation_prompt
-        continuation_prompt=$(build_context_limit_prompt)
+        continuation_prompt=$(build_context_limit_prompt "${PROGRESS_FILE:-}")
         run_continuation_session "$continuation_prompt" "$raw_log" "$text_output"
     else
         wait "$CLAUDE_PID" 2>/dev/null
@@ -1151,13 +1279,14 @@ main() {
     shift
 
     case "$cmd" in
-        init)   cmd_init "$@" ;;
-        begin)  cmd_begin "$@" ;;
-        attach) cmd_attach "$@" ;;
-        stop)   cmd_stop "$@" ;;
-        list)   cmd_list "$@" ;;
-        accept) cmd_accept "$@" ;;
-        reject) cmd_reject "$@" ;;
+        init)    cmd_init "$@" ;;
+        begin)   cmd_begin "$@" ;;
+        attach)  cmd_attach "$@" ;;
+        stop)    cmd_stop "$@" ;;
+        list)    cmd_list "$@" ;;
+        accept)  cmd_accept "$@" ;;
+        reject)  cmd_reject "$@" ;;
+        migrate) cmd_migrate "$@" ;;
         -h|--help) usage_root ;;
         *)
             echo "tarvos: unknown command: ${cmd}" >&2

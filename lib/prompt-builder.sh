@@ -45,14 +45,17 @@ build_prompt() {
 
 # Build the context-limit continuation prompt
 # Sent via `claude -c -p` when context limit is reached
+# Args: $1 = progress file path (optional; defaults to "progress.md" in the project root)
 # Outputs the prompt to stdout
 build_context_limit_prompt() {
-    cat <<'PROMPT'
+    local progress_file="${1:-progress.md}"
+    cat <<PROMPT
 CONTEXT LIMIT REACHED. You must stop development immediately.
 
-1. Write a `progress.md` file in the project root. KEEP IT UNDER 40 LINES. Use this format:
+1. Write a progress report to: ${progress_file}
+KEEP IT UNDER 40 LINES. Use this format:
 
-```markdown
+\`\`\`markdown
 # Progress Report
 
 ## Current Status
@@ -70,15 +73,15 @@ Status: IN_PROGRESS
 
 ## Gotchas
 - [Only non-obvious blockers — skip section if none]
-```
+\`\`\`
 
 Do NOT include: line numbers, function signatures, code snippets, design docs, architecture notes, full file listings, or anything already in the PRD. The next agent can read the code itself. Be a sticky note, not a design document.
 
-2. After writing progress.md, output on its own line:
+2. After writing the progress report, output on its own line:
 
 PHASE_IN_PROGRESS
 
-Do NOT continue any other development work. Write progress.md and stop.
+Do NOT continue any other development work. Write the progress report and stop.
 PROMPT
 }
 
