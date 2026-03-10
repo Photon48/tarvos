@@ -778,10 +778,140 @@ log_usage_snapshot() {
     echo "${timestamp} | input: ${input_tokens} | output: ${output_tokens} | total: ${total}" >> "$usage_log"
 }
 
+# ──────────────────────────────────────────────────────────────
+# Completion overlay screen — shown when ALL_PHASES_COMPLETE
+# Displays a full-screen panel with summary content streamed live.
+# Args: $1 = session_name (for title and summary file path)
+# ──────────────────────────────────────────────────────────────
+tui_show_completion_overlay() {
+    local session_name="${1:-}"
+    [[ "$TUI_ENABLED" -eq 1 ]] || return 0
+
+    local summary_file=""
+    if [[ -n "$session_name" ]]; then
+        summary_file=".tarvos/sessions/${session_name}/summary.md"
+    fi
+
+    local w=$TUI_COLS
+    local panel_title=" ✓ PRD Complete"
+    [[ -n "$session_name" ]] && panel_title=" ✓ PRD Complete — ${session_name}"
+
+    # Put terminal in raw single-char read mode
+    local old_stty
+    old_stty=$(stty -g 2>/dev/null || true)
+    stty -echo -icanon min 0 time 0 2>/dev/null || true
+
+    local pager="${PAGER:-less}"
+    local done_key=0
+
+    while [[ "$done_key" -eq 0 ]]; do
+        # Refresh terminal dimensions
+        TUI_COLS=$(tput cols 2>/dev/null || echo 80)
+        TUI_ROWS=$(tput lines 2>/dev/null || echo 24)
+        w=$TUI_COLS
+
+        tput clear 2>/dev/null
+
+        # Header (2 rows)
+        local now_str
+        now_str=$(date '+%H:%M:%S')
+        local header_right="  ${now_str}  "
+        local header_title="  ${TC_BOLD}${TC_NORMAL}🦥 TARVOS${TC_RESET}"
+        local header_sub="  ${TC_DIM}Autonomous AI Coding Orchestrator${TC_RESET}"
+        _mv 1 1
+        printf '%b' "${TC_HEADER_BG}"; _line "${header_title}"; printf '%b' "${TC_RESET}"
+        _mv 1 $(( w - ${#header_right} + 1 ))
+        printf '%b' "${TC_HEADER_BG}${TC_MUTED}${header_right}${TC_RESET}"
+        _mv 2 1
+        printf '%b' "${TC_HEADER_BG}"; _line "${header_sub}"; printf '%b' "${TC_RESET}"
+        _mv 3 1; printf '\n'
+
+        # Summary panel
+        local panel_row=4
+        local panel_height=$(( TUI_ROWS - panel_row - 2 ))
+        [[ $panel_height -lt 5 ]] && panel_height=5
+
+        _mv $panel_row 1
+        tc_draw_box_top "$panel_title" "$w" "${TC_SUCCESS}"
+
+        local summary_lines=()
+        if [[ -n "$summary_file" ]] && [[ -f "$summary_file" ]]; then
+            while IFS= read -r line; do
+                summary_lines+=("  ${line}")
+            done < "$summary_file"
+        fi
+
+        local inner_height=$(( panel_height - 2 ))
+        local available=$(( inner_height - 4 ))  # reserve space for status lines
+
+        # Show status / generating message
+        local summary_count=${#summary_lines[@]}
+        local generating_msg=""
+        if [[ $summary_count -eq 0 ]]; then
+            generating_msg="  ⠋ Generating summary..."
+        else
+            generating_msg="  Summary saved to .tarvos/sessions/${session_name}/summary.md"
+        fi
+
+        # Render content lines (first N lines of summary)
+        local row_idx=0
+        _mv $(( panel_row + 1 )) 1
+        tc_draw_box_line "" "$w" "${TC_SUCCESS}"
+        for (( row_idx=0; row_idx < available && row_idx < summary_count; row_idx++ )); do
+            tc_draw_box_line "${summary_lines[$row_idx]}" "$w" "${TC_SUCCESS}"
+        done
+        # Fill remaining rows
+        local remaining=$(( inner_height - summary_count - 2 ))
+        [[ $remaining -lt 0 ]] && remaining=0
+        local fill_idx
+        for (( fill_idx=0; fill_idx < remaining; fill_idx++ )); do
+            tc_draw_box_line "" "$w" "${TC_SUCCESS}"
+        done
+        tc_draw_box_line "" "$w" "${TC_SUCCESS}"
+        tc_draw_box_line "  ${TC_DIM}${generating_msg}${TC_RESET}" "$w" "${TC_SUCCESS}"
+
+        tc_draw_box_bottom "$w" "${TC_SUCCESS}"
+
+        # Footer
+        local footer_row=$(( TUI_ROWS - 1 ))
+        _mv $footer_row 1
+        local footer_line
+        if [[ -n "$summary_file" ]] && [[ -f "$summary_file" ]]; then
+            footer_line="  ${TC_ACCENT}[Enter]${TC_RESET} Back to list  ${TC_ACCENT}[s]${TC_RESET} Open summary.md  ${TC_ACCENT}[q]${TC_RESET} Quit"
+        else
+            footer_line="  ${TC_ACCENT}[Enter]${TC_RESET} Back to list  ${TC_ACCENT}[q]${TC_RESET} Quit"
+        fi
+        printf '%b' "${TC_PANEL_BG}"; _line "$footer_line"; printf '%b' "${TC_RESET}"
+
+        # Read keypress (0.5s timeout for live update)
+        local key=""
+        if read -r -s -n1 -t 0.5 key 2>/dev/null; then
+            case "$key" in
+                $'\x0a'|$'\x0d'|'q')
+                    done_key=1
+                    ;;
+                's')
+                    if [[ -n "$summary_file" ]] && [[ -f "$summary_file" ]]; then
+                        stty "$old_stty" 2>/dev/null || true
+                        tput rmcup 2>/dev/null
+                        "${pager}" "$summary_file"
+                        tput smcup 2>/dev/null
+                        tput civis 2>/dev/null
+                        stty -echo -icanon min 0 time 0 2>/dev/null || true
+                    fi
+                    ;;
+            esac
+        fi
+    done
+
+    stty "$old_stty" 2>/dev/null || true
+}
+
 log_final_summary() {
     local total_iterations="$1"
     local final_signal="$2"
     local start_time="$3"
+    local session_name="${4:-}"
 
     if [[ "$final_signal" == "ALL_PHASES_COMPLETE" ]]; then
         CURRENT_STATUS="DONE"
@@ -791,9 +921,15 @@ log_final_summary() {
     _activity "Finished: ${final_signal} after ${total_iterations} iterations"
     tui_render
 
-    # Leave TUI up for a moment so user can see final state, then tear down
-    sleep 2
-    tui_cleanup
+    # For ALL_PHASES_COMPLETE: show completion overlay (waits for keypress)
+    if [[ "$final_signal" == "ALL_PHASES_COMPLETE" ]] && [[ "$TUI_ENABLED" -eq 1 ]]; then
+        tui_show_completion_overlay "$session_name"
+        tui_cleanup
+    else
+        # Leave TUI up for a moment so user can see final state, then tear down
+        sleep 2
+        tui_cleanup
+    fi
 
     # Print a plain-text summary after restoring the normal terminal
     local end_time

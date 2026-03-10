@@ -68,8 +68,10 @@ branch_exists() {
 
 # ──────────────────────────────────────────────────────────────
 # branch_create
-# Create a new tarvos/<session_name>-<timestamp> branch from the
-# current branch, then checkout into it.
+# Compute the tarvos/<session_name>-<timestamp> branch name and
+# create it from the current HEAD (without checking it out).
+# Worktree isolation: worktree_create() in worktree-manager.sh
+# does the actual checkout via `git worktree add`.
 # Args: $1 = session_name
 # Outputs: the new branch name
 # Returns 0 on success, 1 on failure.
@@ -80,7 +82,8 @@ branch_create() {
     timestamp=$(date +%Y%m%d-%H%M%S)
     local new_branch="tarvos/${session_name}-${timestamp}"
 
-    if ! git checkout -b "$new_branch" 2>/dev/null; then
+    # Create the branch at current HEAD without switching to it
+    if ! git branch "$new_branch" 2>/dev/null; then
         echo "tarvos: failed to create branch '${new_branch}'." >&2
         return 1
     fi

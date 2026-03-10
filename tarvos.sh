@@ -458,9 +458,10 @@ cmd_begin() {
         exit 1
     fi
 
-    # Source session manager, branch manager, and detach manager
+    # Source session manager, branch manager, worktree manager, and detach manager
     source "${SCRIPT_DIR}/lib/session-manager.sh"
     source "${SCRIPT_DIR}/lib/branch-manager.sh"
+    source "${SCRIPT_DIR}/lib/worktree-manager.sh"
     source "${SCRIPT_DIR}/lib/detach-manager.sh"
 
     if ! session_exists "$session_name"; then
@@ -497,14 +498,17 @@ cmd_begin() {
         exit 1
     fi
 
-    # ── Branch isolation ────────────────────────────────────────
+    # ── Branch + Worktree isolation ─────────────────────────────
     # Ensure git working directory is clean before touching branches
     if ! branch_ensure_clean; then
         exit 1
     fi
 
+    local WORKTREE_PATH=""
+
     if [[ "$SESSION_STATUS" == "initialized" ]]; then
-        # Fresh session: record original branch, create tarvos/* branch
+        # Fresh session: record original branch, create tarvos/* branch,
+        # then create an isolated worktree for it (no checkout in main tree)
         local original_branch
         if ! original_branch=$(branch_get_current); then
             exit 1
@@ -520,15 +524,41 @@ cmd_begin() {
         # Persist branch info into session state
         session_set_branch "$session_name" "$new_branch" "$original_branch"
 
-        # Reload so SESSION_BRANCH / SESSION_ORIGINAL_BRANCH are current
+        # Create a git worktree for the new branch
+        local abs_wt_path
+        if ! abs_wt_path=$(worktree_create "$session_name" "$new_branch"); then
+            echo "tarvos: failed to create worktree for session '${session_name}'." >&2
+            exit 1
+        fi
+
+        echo "tarvos: worktree at '$(worktree_path "${session_name}")'"
+
+        # Persist worktree path into session state
+        session_set_worktree_path "$session_name" "$abs_wt_path"
+
+        WORKTREE_PATH="$abs_wt_path"
+
+        # Reload so all SESSION_* vars are current
         session_load "$session_name"
     else
-        # Resumed session: checkout the existing session branch
-        if [[ -n "$SESSION_BRANCH" ]]; then
-            if ! branch_checkout "$SESSION_BRANCH"; then
+        # Resumed session: use existing worktree or recreate it
+        if worktree_exists "$session_name"; then
+            WORKTREE_PATH="$SESSION_WORKTREE_PATH"
+            if [[ -z "$WORKTREE_PATH" ]]; then
+                WORKTREE_PATH="$(pwd)/$(worktree_path "${session_name}")"
+            fi
+            echo "tarvos: resuming worktree at '$(worktree_path "${session_name}")'"
+        elif [[ -n "$SESSION_BRANCH" ]]; then
+            # Worktree was removed but branch still exists — recreate it
+            local abs_wt_path
+            if ! abs_wt_path=$(worktree_create "$session_name" "$SESSION_BRANCH"); then
+                echo "tarvos: failed to recreate worktree for session '${session_name}'." >&2
                 exit 1
             fi
-            echo "tarvos: checked out branch '${SESSION_BRANCH}'"
+            echo "tarvos: recreated worktree at '$(worktree_path "${session_name}")'"
+            session_set_worktree_path "$session_name" "$abs_wt_path"
+            WORKTREE_PATH="$abs_wt_path"
+            session_load "$session_name"
         fi
     fi
 
@@ -539,9 +569,13 @@ cmd_begin() {
         exit 1
     fi
 
-    # Project directory = CWD at invocation time
+    # Project directory: use the worktree for isolation, or CWD if no worktree
     local PROJECT_DIR
-    PROJECT_DIR="$(pwd)"
+    if [[ -n "$WORKTREE_PATH" ]] && [[ -d "$WORKTREE_PATH" ]]; then
+        PROJECT_DIR="$WORKTREE_PATH"
+    else
+        PROJECT_DIR="$(pwd)"
+    fi
 
     # ── Background / detached mode ──────────────────────────────
     if (( bg_mode )); then
@@ -567,6 +601,7 @@ cmd_begin() {
     source "${SCRIPT_DIR}/lib/prompt-builder.sh"
     source "${SCRIPT_DIR}/lib/signal-detector.sh"
     source "${SCRIPT_DIR}/lib/context-monitor.sh"
+    source "${SCRIPT_DIR}/lib/summary-generator.sh"
 
     # Mark session as running
     session_set_status "$session_name" "running"
@@ -734,6 +769,7 @@ cmd_accept() {
 
     source "${SCRIPT_DIR}/lib/session-manager.sh"
     source "${SCRIPT_DIR}/lib/branch-manager.sh"
+    source "${SCRIPT_DIR}/lib/worktree-manager.sh"
 
     if ! session_exists "$session_name"; then
         echo "tarvos accept: session '${session_name}' not found." >&2
@@ -771,6 +807,12 @@ cmd_accept() {
 
     echo "Accepting session '${session_name}'..."
     echo "  Merging '${source_branch}' → '${target_branch}'"
+
+    # 3. Remove the worktree before merging (must be done before branch operations)
+    if worktree_exists "$session_name"; then
+        echo "  Removing worktree..."
+        worktree_remove "$session_name" || true
+    fi
 
     # 4. Attempt merge (branch_merge checks out target and merges source)
     if ! branch_merge "$source_branch" "$target_branch"; then
@@ -829,6 +871,7 @@ cmd_reject() {
 
     source "${SCRIPT_DIR}/lib/session-manager.sh"
     source "${SCRIPT_DIR}/lib/branch-manager.sh"
+    source "${SCRIPT_DIR}/lib/worktree-manager.sh"
 
     if ! session_exists "$session_name"; then
         echo "tarvos reject: session '${session_name}' not found." >&2
@@ -863,28 +906,19 @@ cmd_reject() {
 
     echo "Rejecting session '${session_name}'..."
 
-    # 3. Delete session branch (if exists)
+    # 3. Remove the worktree first (before deleting the branch)
+    if worktree_exists "$session_name"; then
+        echo "  Removing worktree..."
+        worktree_remove "$session_name" || true
+    fi
+
+    # 4. Delete session branch (if exists)
     if [[ -n "$SESSION_BRANCH" ]]; then
-        # Switch away from the session branch if we're on it
-        local current_branch
-        current_branch=$(branch_get_current 2>/dev/null || true)
-        if [[ "$current_branch" == "$SESSION_BRANCH" ]]; then
-            local fallback_branch="${SESSION_ORIGINAL_BRANCH:-main}"
-            echo "  Switching to '${fallback_branch}' before deleting branch..."
-            if ! git checkout "$fallback_branch" 2>/dev/null; then
-                # Fallback: try main, master, or any existing branch
-                local any_branch
-                any_branch=$(git branch --format='%(refname:short)' | grep -v "^${SESSION_BRANCH}$" | head -1 2>/dev/null || true)
-                if [[ -n "$any_branch" ]]; then
-                    git checkout "$any_branch" 2>/dev/null || true
-                fi
-            fi
-        fi
         echo "  Deleting branch '${SESSION_BRANCH}'..."
         branch_delete "$SESSION_BRANCH" || true
     fi
 
-    # 4. Delete session folder and remove from registry
+    # 5. Delete session folder and remove from registry
     echo "  Removing session data..."
     session_delete "$session_name"
 
@@ -1264,6 +1298,18 @@ run_agent_loop() {
                         session_set_status "$session_name" "done"
                         session_set_final_signal "$session_name" "$final_signal"
                     fi
+                    # Generate completion summary (non-blocking: runs then continues)
+                    if [[ -n "$session_name" ]]; then
+                        tui_set_phase_info "Generating summary..."
+                        log_info "Generating completion summary..."
+                        if generate_summary "$session_name" "$PRD_FILE" "${PROGRESS_FILE:-}" "$LOG_DIR"; then
+                            log_success "Summary saved to .tarvos/sessions/${session_name}/summary.md"
+                            tui_set_phase_info "Summary saved. All phases complete."
+                        else
+                            log_warning "Summary generation failed (summary unavailable)"
+                            tui_set_phase_info "All phases complete (summary unavailable)"
+                        fi
+                    fi
                     break
                     ;;
                 PHASE_COMPLETE)
@@ -1311,7 +1357,7 @@ run_agent_loop() {
         session_set_final_signal "$session_name" "$final_signal"
     fi
 
-    log_final_summary "$loop_num" "$final_signal" "$start_time"
+    log_final_summary "$loop_num" "$final_signal" "$start_time" "$session_name"
 
     if [[ "$final_signal" == "ALL_PHASES_COMPLETE" ]]; then
         exit 0

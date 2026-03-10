@@ -16,6 +16,7 @@ SESSION_TOKEN_LIMIT=""
 SESSION_MAX_LOOPS=""
 SESSION_BRANCH=""
 SESSION_ORIGINAL_BRANCH=""
+SESSION_WORKTREE_PATH=""
 SESSION_CREATED_AT=""
 SESSION_STARTED_AT=""
 SESSION_LAST_ACTIVITY=""
@@ -149,6 +150,7 @@ session_init() {
             "max_loops": ($max_loops | tonumber),
             "branch": "",
             "original_branch": "",
+            "worktree_path": "",
             "created_at": $created_at,
             "started_at": "",
             "last_activity": $last_activity,
@@ -182,6 +184,7 @@ session_load() {
     SESSION_MAX_LOOPS=$(jq -r '.max_loops' "$state_file")
     SESSION_BRANCH=$(jq -r '.branch' "$state_file")
     SESSION_ORIGINAL_BRANCH=$(jq -r '.original_branch' "$state_file")
+    SESSION_WORKTREE_PATH=$(jq -r '.worktree_path // ""' "$state_file")
     SESSION_CREATED_AT=$(jq -r '.created_at' "$state_file")
     SESSION_STARTED_AT=$(jq -r '.started_at' "$state_file")
     SESSION_LAST_ACTIVITY=$(jq -r '.last_activity' "$state_file")
@@ -349,6 +352,23 @@ session_set_branch() {
     local status
     status=$(jq -r '.status' "$state_file")
     registry_update "$name" "$status" "$branch" "$original_branch" "$now"
+}
+
+# Update worktree_path in session state
+# Args: $1 = name, $2 = worktree_path (absolute path)
+session_set_worktree_path() {
+    local name="$1"
+    local wt_path="$2"
+    local state_file
+    state_file=$(session_state_file "$name")
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg wt_path "$wt_path" --arg now "$now" \
+        '.worktree_path = $wt_path | .last_activity = $now' \
+        "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
 
 # Mark session as started (set started_at timestamp)
