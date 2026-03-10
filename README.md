@@ -34,11 +34,11 @@ tarvos begin --continue             # resume from existing progress.md
 
 Write a planning document describing what you want to build — phases, sprints, milestones, a task list, whatever structure makes sense for your project. See [`example.prd.md`](./example.prd.md) for an example.
 
-**`tarvos init <plan>`** reads the document with a non-agentic Claude call, identifies the work units, and flags any obvious problems before you commit to a run. It writes a `.tarvos/config` file in your repo so `begin` knows what to do.
+**`tarvos init <plan>`** reads your document, identifies the work units, and flags any obvious problems before you commit to a run.
 
-**`tarvos begin`** enters a full-screen TUI and starts the agent loop. Each iteration launches a fresh Claude Code agent against your plan. When an agent finishes a phase (or hits the token limit), it writes a `progress.md` handoff report and signals Tarvos. A new agent picks up from there.
+**`tarvos begin`** enters a full-screen TUI and starts the agent loop. Each iteration launches a fresh Claude Code agent against your plan. When an agent finishes a phase, a new agent picks up from there.
 
-The loop runs until the agent signals `ALL_PHASES_COMPLETE`, max loops is reached, or you press `Ctrl+C`.
+The loop runs until all phases are complete, max loops is reached, or you press `Ctrl+C`.
 
 ---
 
@@ -54,7 +54,7 @@ Validates and previews the plan, then writes `.tarvos/config`.
 | `--max-loops N` | `50` | Maximum agent iterations before stopping |
 | `--no-preview` | — | Skip the AI preview; parse headings locally and write config immediately |
 
-The preview uses a single non-agentic LLM call (no tool loop) to read your plan regardless of structure and report:
+The preview reads your plan regardless of structure and reports:
 - **VALID** — coherent plan, ready to go
 - **WARN** — usable but something worth knowing (e.g. vague scope, no acceptance criteria)
 - **INVALID** — not a workable plan; config is still written so you can proceed if you want
@@ -70,8 +70,8 @@ Reads `.tarvos/config` and starts the agent loop. Errors clearly if `init` hasn'
 ## State and logs
 
 - **`.tarvos/config`** — written by `init`, read by `begin`. Add `.tarvos/` to your `.gitignore`.
-- **`progress.md`** — the handoff report each agent writes before signalling completion. Lives in your project root. Safe to delete between runs (or let `begin` clear it automatically).
-- **`logs/tarvos/run-<timestamp>/`** — per-loop raw JSONL, token usage snapshots, stderr, and a dashboard summary.
+- **`progress.md`** — tracks where the current run is up to. Lives in your project root. Safe to delete between runs.
+- **`logs/tarvos/run-<timestamp>/`** — per-run logs and a dashboard summary.
 
 ---
 
