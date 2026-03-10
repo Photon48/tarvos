@@ -1,20 +1,21 @@
 # Progress Report
 
 ## Current Status
-Phase 3 of 5: `tarvos begin` safety prompt for `running` sessions
+Phase 4 of 5: `tarvos list` → `tarvos tui`; default detached mode
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Replaced hard error for `running` sessions in `cmd_begin` with interactive [y/N] prompt; y → detach_stop (if PID exists) + _tarvos_reject_force + _tarvos_reinit_session + session_load (status → initialized, falls into normal initialized path for branch+worktree); n/Enter → exit with `View it in the TUI: tarvos tui`
+- tarvos.sh: Renamed `cmd_list`→`cmd_tui`, `usage_list`→`usage_tui`; updated `main()` dispatch (`list`→`tui`); updated `usage_begin` to remove `--continue`/`--bg`; updated `usage_root` with new lifecycle; `cmd_begin` now always detaches (bg if interactive, runs agent loop directly if non-interactive); `cmd_continue` prints TUI hint after `detach_start`; running-session prompt skips interactivity check when stdin not a tty
+- lib/detach-manager.sh: Updated `detach_start` output to include `TUI: tarvos tui` line; fixed stale `--bg` mention in `detach_attach`
+- lib/list-tui.sh: Fixed error message (`tarvos list:` → `tarvos tui:`); removed `b` key binding; removed "Start (bg)"/"Resume (bg)" actions; updated "Resume" to call `tarvos continue`; updated footer; fixed pause-after-action logic
+- tests/smoke-test.sh: Updated action arrays in test 3 to match new action sets (no more bg actions)
 
 ## Immediate Next Task
-Begin Phase 4: Rename `cmd_list`→`cmd_tui`, `usage_list`→`usage_tui`, update `main()` dispatch (list→tui), update detach_start output in detach-manager.sh to reference `tarvos tui`, fix list-tui.sh line 511 error message.
+Begin Phase 5: Update README.md and all `usage_*` help strings. Update `### tarvos / tarvos list` heading → `tarvos tui`, remove `b` key from TUI keys section, update `### tarvos begin` section, add `### tarvos continue <name>` section, update session lifecycle diagram.
 
 ## Key Files for Next Task
-- tarvos.sh: `cmd_list`, `usage_list`, `main()` dispatch
-- lib/detach-manager.sh: `detach_start` output lines (~152-154)
-- lib/list-tui.sh: line 511 error message
+- README.md: all sections need updating
+- tarvos.sh: `usage_root` already updated; verify `usage_begin`, `usage_continue`, `usage_tui` are accurate
 
 ## Gotchas
-- Phase 4 also removes --bg/--fg flags from cmd_begin and cmd_continue; always calls detach_start
-- After detach_start, print: "Session '...' started in background (PID: ...).\n\nView progress in the TUI:\n  tarvos tui\n\nOr tail the raw log:\n  tarvos attach <name>"
+- None
