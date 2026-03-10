@@ -1,3 +1,12 @@
+---
+name: tarvos-skill
+description: Tarvos orchestration protocol for multi-agent coding tasks. Use when operating inside a Tarvos agent loop — you will be given a PRD (master plan) and optionally a progress.md handoff. Execute the current phase, write progress.md, and signal PHASE_COMPLETE, PHASE_IN_PROGRESS, or ALL_PHASES_COMPLETE.
+disable-model-invocation: true
+metadata:
+  author: Tarvos
+  version: 1.0.0
+---
+
 # Tarvos Protocol
 
 You are operating under the **Tarvos** orchestration system. Multiple Claude Code agents work sequentially on a shared master plan (the PRD above). Each agent completes one phase (or part of a phase), writes a handoff report, and signals completion. A fresh agent then picks up where you left off.
@@ -84,3 +93,50 @@ If you receive a message saying "CONTEXT LIMIT REACHED" or similar:
 - Write `progress.md` with your current state.
 - Output `PHASE_IN_PROGRESS`.
 - Do not attempt any further code changes.
+
+## Examples
+
+### Good progress.md (concise, actionable)
+
+```markdown
+# Progress Report
+
+## Current Status
+Phase 2 of 4: API Integration
+Status: COMPLETED
+
+## What Was Done This Session
+- src/api/client.ts: Added fetch wrapper with retry logic
+- src/api/endpoints.ts: Defined all REST endpoints
+
+## Immediate Next Task
+Begin Phase 3: Implement the Dashboard component using the API client from Phase 2.
+
+## Key Files for Next Task
+- src/components/Dashboard.tsx
+- src/api/client.ts
+
+## Gotchas
+- API rate limit is 100 req/min — add throttling if needed
+```
+
+### Bad progress.md (too verbose, wastes context)
+
+```markdown
+# Progress Report
+
+## Current Status
+Phase 2 of 4: API Integration
+Status: COMPLETED
+
+## What Was Done This Session
+- src/api/client.ts (lines 1-150): Created the main API client class with the following methods: fetchWithRetry(), handleError(), parseResponse(), buildHeaders()...
+[continues for 80 more lines with full implementation details]
+```
+
+## Common Issues
+
+1. **progress.md too long**: Keep it under 40 lines. The next agent can read the actual code.
+2. **Forgot to write progress.md**: Always write it before signaling. The system depends on it.
+3. **Wrong trigger phrase**: Use exactly `PHASE_COMPLETE`, `PHASE_IN_PROGRESS`, or `ALL_PHASES_COMPLETE`.
+4. **Continuing after context warning**: Stop immediately when told context limit is reached.

@@ -12,7 +12,14 @@ set -uo pipefail
 #   tarvos begin [--continue]
 
 # Resolve script directory (where lib/ and protocol live)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Dereference symlinks so SCRIPT_DIR always points to the real repo directory,
+# not the directory containing the symlink (e.g. /usr/local/bin).
+_TARVOS_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$_TARVOS_SOURCE" ]]; do
+    _TARVOS_SOURCE="$(readlink "$_TARVOS_SOURCE")"
+done
+SCRIPT_DIR="$(cd "$(dirname "$_TARVOS_SOURCE")" && pwd)"
+unset _TARVOS_SOURCE
 
 # Clear Claude Code env vars so child claude instances don't think they're nested sessions.
 # Tarvos spawns independent Claude agents, not nested sessions.
@@ -271,10 +278,10 @@ cmd_begin() {
         exit 1
     fi
 
-    # Protocol file (lives next to tarvos.sh in SCRIPT_DIR)
-    local PROTOCOL_FILE="${SCRIPT_DIR}/tarvos-protocol.md"
+    # Protocol file (SKILL.md in the tarvos-skill folder)
+    local PROTOCOL_FILE="${SCRIPT_DIR}/tarvos-skill/SKILL.md"
     if [[ ! -f "$PROTOCOL_FILE" ]]; then
-        echo "tarvos begin: protocol file not found: $PROTOCOL_FILE" >&2
+        echo "tarvos begin: skill file not found: $PROTOCOL_FILE" >&2
         exit 1
     fi
 

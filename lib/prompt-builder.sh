@@ -18,10 +18,10 @@ build_prompt() {
     prompt+="$(cat "$prd_file")"$'\n'
     prompt+=$'\n'
 
-    # Section 2: Tarvos Protocol
+    # Section 2: Tarvos Protocol (strip YAML frontmatter from SKILL.md)
     prompt+="# Tarvos Protocol"$'\n'
     prompt+=$'\n'
-    prompt+="$(cat "$protocol_file")"$'\n'
+    prompt+="$(awk '/^---/{i++; if(i==2) found=1; next} found' "$protocol_file")"$'\n'
     prompt+=$'\n'
 
     # Section 3: Previous Agent's Progress Report (if exists)

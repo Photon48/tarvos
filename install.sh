@@ -22,4 +22,11 @@ fi
 
 sudo ln -s "$TARGET" "$LINK"
 echo "Installed: ${LINK} -> ${TARGET}"
+
+# Install tarvos skill to Claude Code personal skills directory
+SKILLS_DIR="${HOME}/.claude/skills/tarvos-skill"
+mkdir -p "$SKILLS_DIR"
+cp "${SCRIPT_DIR}/tarvos-skill/SKILL.md" "$SKILLS_DIR/SKILL.md"
+echo "Installed skill: ${SKILLS_DIR}/SKILL.md"
+
 echo "Run \`tarvos --help\` to get started."
