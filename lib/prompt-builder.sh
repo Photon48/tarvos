@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prompt-builder.sh - Builds composite prompts for each Ralph Wiggum iteration
+# prompt-builder.sh - Builds composite prompts for each Tarvos iteration
 
 # Build the main prompt for an iteration
 # Args: $1 = PRD file path, $2 = protocol file path, $3 = project directory
@@ -18,8 +18,8 @@ build_prompt() {
     prompt+="$(cat "$prd_file")"$'\n'
     prompt+=$'\n'
 
-    # Section 2: Ralph Wiggum Protocol
-    prompt+="# Ralph Wiggum Protocol"$'\n'
+    # Section 2: Tarvos Protocol
+    prompt+="# Tarvos Protocol"$'\n'
     prompt+=$'\n'
     prompt+="$(cat "$protocol_file")"$'\n'
     prompt+=$'\n'
@@ -88,7 +88,7 @@ build_recovery_prompt() {
     local project_dir="$1"
 
     cat <<PROMPT
-You are a recovery agent for the Ralph Wiggum orchestration system. The previous agent completed work but failed to write a progress.md file.
+You are a recovery agent for the Tarvos orchestration system. The previous agent completed work but failed to write a progress.md file.
 
 Examine the current state of the project in "${project_dir}":
 - Check git log for recent commits

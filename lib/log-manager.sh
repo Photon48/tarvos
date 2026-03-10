@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# log-manager.sh - TUI dashboard with real-time visibility into Ralph Wiggum runs
+# log-manager.sh - TUI dashboard with real-time visibility into Tarvos runs
 
 # ──────────────────────────────────────────────────────────────
 # Colors & styles
@@ -58,7 +58,7 @@ init_logging() {
     local project_dir="$1"
     local timestamp
     timestamp=$(date +%Y%m%d-%H%M%S)
-    LOG_DIR="${project_dir}/logs/ralph-wiggum/run-${timestamp}"
+    LOG_DIR="${project_dir}/logs/tarvos/run-${timestamp}"
     mkdir -p "$LOG_DIR"
     DASHBOARD_LOG="${LOG_DIR}/dashboard.log"
     touch "$DASHBOARD_LOG"
@@ -140,7 +140,7 @@ tui_render() {
     # ── Header ──
     _mv $row 1
     echo -ne "${BG_HEADER}${WHITE}${BOLD}"
-    _line "  RALPH WIGGUM"
+    _line "  TARVOS"
     row=$(( row + 1 ))
     _mv $row 1
     echo -ne "${BG_HEADER}${WHITE}"
@@ -479,7 +479,7 @@ log_final_summary() {
 
     echo ""
     echo -e "${BOLD}${MAGENTA}══════════════════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}${MAGENTA}  RALPH WIGGUM | Final Summary${RESET}"
+    echo -e "${BOLD}${MAGENTA}  TARVOS | Final Summary${RESET}"
     echo -e "${BOLD}${MAGENTA}══════════════════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  Status:       ${status_color}${BOLD}${status_text}${RESET}"

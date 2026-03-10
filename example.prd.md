@@ -1,6 +1,6 @@
 # Example PRD: Build a Simple Task Tracker CLI
 
-This is a multi-phase PRD for testing the Ralph Wiggum orchestration system.
+This is a multi-phase PRD for testing the Tarvos orchestration system.
 
 ## Phase 1: Project Setup
 

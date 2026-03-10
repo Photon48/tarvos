@@ -1,6 +1,6 @@
-# Ralph Wiggum Protocol
+# Tarvos Protocol
 
-You are operating under the **Ralph Wiggum** orchestration system. Multiple Claude Code agents work sequentially on a shared master plan (the PRD above). Each agent completes one phase (or part of a phase), writes a handoff report, and signals completion. A fresh agent then picks up where you left off.
+You are operating under the **Tarvos** orchestration system. Multiple Claude Code agents work sequentially on a shared master plan (the PRD above). Each agent completes one phase (or part of a phase), writes a handoff report, and signals completion. A fresh agent then picks up where you left off.
 
 ## Your Responsibilities
 
