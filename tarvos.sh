@@ -284,6 +284,37 @@ cmd_init() {
     # Resolve to absolute path
     prd_file="$(cd "$(dirname "$prd_file")" && pwd)/$(basename "$prd_file")"
 
+    # ── Git environment validation ──────────────────────────────
+    # Scenario A: No git repo at all
+    if ! git rev-parse --git-dir &>/dev/null; then
+        cat <<'EOF'
+tarvos: this directory is not a git repository.
+
+  Tarvos requires git to isolate each PRD on its own branch.
+  To initialize git here, run:
+
+    git init
+    git add .
+    git commit -m "initial commit"
+
+  Then re-run:
+
+    tarvos init <your-prd.md> --name <session-name>
+EOF
+        exit 1
+    fi
+
+    # Scenario B: Git repo exists — ensure .tarvos/ is in .gitignore
+    if [[ ! -f ".gitignore" ]]; then
+        printf '.tarvos/\n' > ".gitignore"
+        echo "  ✓ Created .gitignore with .tarvos/"
+    elif ! grep -qxF '.tarvos/' ".gitignore" 2>/dev/null; then
+        printf '\n.tarvos/\n' >> ".gitignore"
+        echo "  ✓ Added .tarvos/ to .gitignore"
+    fi
+    # (If .gitignore already has .tarvos/ — do nothing, idempotent)
+    # ────────────────────────────────────────────────────────────
+
     # Validate dependencies
     if ! command -v jq &>/dev/null; then
         echo "tarvos init: jq is required but not installed. Install with: brew install jq" >&2
@@ -352,7 +383,6 @@ _init_display_no_preview() {
     else
         echo -e "  ${DIM}Config written to: .tarvos/config${RESET}"
     fi
-    echo -e "  ${DIM}Tip: add .tarvos/ to your .gitignore${RESET}"
     echo ""
     if [[ -n "$session_name" ]]; then
         echo -e "  ${GREEN}${BOLD}Ready.${RESET} Run \`tarvos begin ${session_name}\` to start."

@@ -2,23 +2,30 @@
 # log-manager.sh - TUI dashboard with real-time visibility into Tarvos runs
 
 # ──────────────────────────────────────────────────────────────
-# Colors & styles
+# Source shared TUI core library
 # ──────────────────────────────────────────────────────────────
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly MAGENTA='\033[0;35m'
-readonly CYAN='\033[0;36m'
-readonly WHITE='\033[1;37m'
-readonly BOLD='\033[1m'
-readonly DIM='\033[2m'
-readonly RESET='\033[0m'
-readonly BG_DARK='\033[48;5;235m'
-readonly BG_HEADER='\033[48;5;24m'
-readonly BG_SUCCESS='\033[48;5;22m'
-readonly BG_WARN='\033[48;5;130m'
-readonly BG_ERR='\033[48;5;52m'
+_LM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tui-core.sh
+source "${_LM_SCRIPT_DIR}/tui-core.sh"
+
+# ──────────────────────────────────────────────────────────────
+# Color aliases (map legacy names to tui-core.sh palette)
+# ──────────────────────────────────────────────────────────────
+RED="$TC_ERROR"
+GREEN="$TC_SUCCESS"
+YELLOW="$TC_WARNING"
+BLUE="$TC_INFO"
+MAGENTA="$TC_PURPLE"
+CYAN="$TC_INFO"
+WHITE="\033[1;37m"
+BOLD="$TC_BOLD"
+DIM="$TC_DIM"
+RESET="$TC_RESET"
+BG_DARK="$TC_PANEL_BG"
+BG_HEADER="$TC_HEADER_BG"
+BG_SUCCESS="\033[48;5;22m"
+BG_WARN="\033[48;5;130m"
+BG_ERR="\033[48;5;52m"
 
 # ──────────────────────────────────────────────────────────────
 # State

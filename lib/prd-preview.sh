@@ -219,7 +219,6 @@ display_preview() {
 
     echo ""
     echo -e "  ${DIM}Config written to: .tarvos/config${RESET}"
-    echo -e "  ${DIM}Tip: add .tarvos/ to your .gitignore${RESET}"
     echo ""
 
     if [[ "$PREVIEW_VALIDITY" == "INVALID" ]]; then
