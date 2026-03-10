@@ -39,6 +39,9 @@ TARVOS_CONFIG=".tarvos/config"
 # Global PID of the running Claude subprocess (so traps can kill it)
 CLAUDE_PID=""
 
+# Global session name (set by cmd_begin, used by shutdown trap)
+CURRENT_SESSION_NAME=""
+
 # ──────────────────────────────────────────────────────────────
 # Usage helpers
 # ──────────────────────────────────────────────────────────────
@@ -67,18 +70,47 @@ Usage: tarvos begin <session-name> [options]
 
 Options:
   --continue          Resume from existing progress.md instead of starting fresh
+  --bg                Run session in background (detached mode)
   -h, --help          Show this help message
 
 Behavior:
   - Requires a clean working directory (no uncommitted changes).
   - On first run: creates a 'tarvos/<name>-<timestamp>' branch and checks it out.
   - On resume:    checks out the existing session branch.
+  - With --bg:    starts the session as a background process (nohup).
+                  Use 'tarvos attach <name>' to follow live output.
 
 Example:
   tarvos begin auth-feature
   tarvos begin auth-feature --continue
+  tarvos begin auth-feature --bg
 
 Run \`tarvos init <prd-path> --name <name>\` first to create a session.
+EOF
+    exit 0
+}
+
+usage_attach() {
+    cat <<EOF
+Usage: tarvos attach <session-name>
+
+Tail the live output of a background session.
+Press Ctrl+C to detach — the session continues running in the background.
+
+Example:
+  tarvos attach auth-feature
+EOF
+    exit 0
+}
+
+usage_stop() {
+    cat <<EOF
+Usage: tarvos stop <session-name>
+
+Stop a running background session (SIGTERM, then SIGKILL after 2s).
+
+Example:
+  tarvos stop auth-feature
 EOF
     exit 0
 }
@@ -91,6 +123,9 @@ Commands:
   init <prd-path> --name <name>   Create a new session
   begin <name>                    Run session agent loop (creates git branch)
   begin <name> --continue         Resume from existing progress.md
+  begin <name> --bg               Run session in background (detached)
+  attach <name>                   Follow live output of a background session
+  stop <name>                     Stop a running background session
 
 Run \`tarvos <command> --help\` for command-specific options.
 EOF
@@ -255,11 +290,13 @@ _init_display_with_preview() {
 cmd_begin() {
     local session_name=""
     local continue_mode=0
+    local bg_mode=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) usage_begin ;;
             --continue) continue_mode=1; shift ;;
+            --bg)       bg_mode=1; shift ;;
             -*)
                 echo "tarvos begin: unknown option: $1" >&2
                 usage_begin
@@ -291,9 +328,10 @@ cmd_begin() {
         exit 1
     fi
 
-    # Source session manager and branch manager
+    # Source session manager, branch manager, and detach manager
     source "${SCRIPT_DIR}/lib/session-manager.sh"
     source "${SCRIPT_DIR}/lib/branch-manager.sh"
+    source "${SCRIPT_DIR}/lib/detach-manager.sh"
 
     if ! session_exists "$session_name"; then
         echo "tarvos begin: session '${session_name}' not found. Run \`tarvos init <prd-path> --name ${session_name}\` first." >&2
@@ -375,6 +413,25 @@ cmd_begin() {
     local PROJECT_DIR
     PROJECT_DIR="$(pwd)"
 
+    # ── Background / detached mode ──────────────────────────────
+    if (( bg_mode )); then
+        # Check that the session isn't already running in background
+        if detach_is_running "$session_name"; then
+            local existing_pid
+            existing_pid=$(detach_get_pid "$session_name")
+            echo "tarvos begin: session '${session_name}' is already running in the background (PID: ${existing_pid})." >&2
+            exit 1
+        fi
+
+        # Mark session as running before we hand off to nohup
+        session_set_status "$session_name" "running"
+        session_mark_started "$session_name"
+
+        detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR"
+        exit 0
+    fi
+
+    # ── Foreground mode ─────────────────────────────────────────
     # Source library modules (now that we know everything is valid)
     source "${SCRIPT_DIR}/lib/log-manager.sh"
     source "${SCRIPT_DIR}/lib/prompt-builder.sh"
@@ -392,7 +449,112 @@ cmd_begin() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# tarvos attach — follow live output of a background session
+# ──────────────────────────────────────────────────────────────
+cmd_attach() {
+    local session_name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_attach ;;
+            -*)
+                echo "tarvos attach: unknown option: $1" >&2
+                usage_attach
+                ;;
+            *)
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos attach: unexpected argument: $1" >&2
+                    usage_attach
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos attach: missing required argument <session-name>" >&2
+        usage_attach
+    fi
+
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/detach-manager.sh"
+
+    if ! session_exists "$session_name"; then
+        echo "tarvos attach: session '${session_name}' not found." >&2
+        exit 1
+    fi
+
+    detach_attach "$session_name"
+}
+
+# ──────────────────────────────────────────────────────────────
+# tarvos stop — stop a running background session
+# ──────────────────────────────────────────────────────────────
+cmd_stop() {
+    local session_name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_stop ;;
+            -*)
+                echo "tarvos stop: unknown option: $1" >&2
+                usage_stop
+                ;;
+            *)
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos stop: unexpected argument: $1" >&2
+                    usage_stop
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos stop: missing required argument <session-name>" >&2
+        usage_stop
+    fi
+
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/detach-manager.sh"
+
+    if ! session_exists "$session_name"; then
+        echo "tarvos stop: session '${session_name}' not found." >&2
+        exit 1
+    fi
+
+    session_load "$session_name" || exit 1
+
+    if [[ "$SESSION_STATUS" != "running" ]]; then
+        echo "tarvos stop: session '${session_name}' is not running (status: ${SESSION_STATUS})." >&2
+        exit 1
+    fi
+
+    if ! detach_is_running "$session_name"; then
+        echo "tarvos stop: session '${session_name}' has no active background process." >&2
+        echo "  It may be a foreground session. Use Ctrl+C to stop it." >&2
+        exit 1
+    fi
+
+    local pid
+    pid=$(detach_get_pid "$session_name")
+    echo "Stopping session '${session_name}' (PID: ${pid})..."
+
+    if detach_stop "$session_name"; then
+        echo "Session '${session_name}' stopped."
+    else
+        echo "tarvos stop: failed to stop session '${session_name}'." >&2
+        exit 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────
 # Clean shutdown: kill claude, restore terminal, exit
+# CURRENT_SESSION_NAME is set by cmd_begin before run_agent_loop
 # ──────────────────────────────────────────────────────────────
 shutdown() {
     local exit_code="${1:-130}"
@@ -404,6 +566,17 @@ shutdown() {
     fi
     CLAUDE_PID=""
     tui_cleanup
+
+    # Update session state to stopped if a session is active
+    if [[ -n "${CURRENT_SESSION_NAME:-}" ]]; then
+        if declare -f session_set_status &>/dev/null; then
+            session_set_status "$CURRENT_SESSION_NAME" "stopped" 2>/dev/null || true
+        fi
+        # Clean up pid file for detached sessions
+        local pid_file="${SESSIONS_DIR:-'.tarvos/sessions'}/${CURRENT_SESSION_NAME}/pid"
+        rm -f "$pid_file" 2>/dev/null || true
+    fi
+
     echo ""
     echo "Tarvos stopped."
     exit "$exit_code"
@@ -705,8 +878,10 @@ main() {
     shift
 
     case "$cmd" in
-        init)  cmd_init "$@" ;;
-        begin) cmd_begin "$@" ;;
+        init)   cmd_init "$@" ;;
+        begin)  cmd_begin "$@" ;;
+        attach) cmd_attach "$@" ;;
+        stop)   cmd_stop "$@" ;;
         -h|--help) usage_root ;;
         *)
             echo "tarvos: unknown command: ${cmd}" >&2

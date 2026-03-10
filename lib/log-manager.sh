@@ -84,6 +84,12 @@ tui_init() {
     CURRENT_TOKEN_LIMIT="$token_limit"
     RUN_START_TIME=$(date +%s)
 
+    # Skip TUI when running without a terminal (e.g. detached/nohup mode)
+    if [[ ! -t 1 ]]; then
+        TUI_ENABLED=0
+        return 0
+    fi
+
     TUI_COLS=$(tput cols 2>/dev/null || echo 80)
     TUI_ROWS=$(tput lines 2>/dev/null || echo 24)
 
