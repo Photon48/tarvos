@@ -1,23 +1,21 @@
 # Progress Report
 
 ## Current Status
-Phase 1 of 5: New `tarvos continue <name>` command
+Phase 2 of 5: `tarvos begin` safety prompt for `stopped` sessions
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Added `usage_continue` help string (after `usage_begin`)
-- tarvos.sh: Added `cmd_continue` function — validates stopped-only status, sets up worktree, calls `detach_start` (bg); errors with hints for running/initialized/done/failed sessions
-- tarvos.sh: Removed `--continue` and `--bg` flags from `cmd_begin`; stopped sessions now auto-set `continue_mode=1`
-- tarvos.sh: Added `continue) cmd_continue "$@" ;;` dispatch in `main()`
-- lib/detach-manager.sh: Added optional `$4 = tarvos_command` param to `detach_start` (defaults to `"begin"`)
+- tarvos.sh: Added `_tarvos_reject_force` helper (worktree remove, branch delete, session delete; uses SESSION_BRANCH global)
+- tarvos.sh: Added `_tarvos_reinit_session` helper (calls session_init only)
+- tarvos.sh: Replaced stopped-session auto-continue block in `cmd_begin` with interactive safety prompt [y/N]; y → reject+reinit+new branch+worktree; n/Enter → exit with tarvos continue hint
 
 ## Immediate Next Task
-Begin Phase 2: Add safety prompt in `cmd_begin` for `stopped` sessions. Add `_tarvos_reject_force` and `_tarvos_reinit_session` private helpers. The prompt should intercept BEFORE the auto-continue logic (before `continue_mode=1` is set in the stopped branch).
+Begin Phase 3: Replace the hard error for `running` sessions in `cmd_begin` with an interactive [y/N] prompt. On y: detach_stop if PID file exists, then _tarvos_reject_force, _tarvos_reinit_session, start fresh.
 
 ## Key Files for Next Task
-- tarvos.sh: `cmd_begin` stopped-session else branch (~line 570)
-- tarvos.sh: add `_tarvos_reject_force` and `_tarvos_reinit_session` helper functions
+- tarvos.sh: `cmd_begin` case block for `running` status (~line 536-543)
+- tarvos.sh: `_tarvos_reject_force` and `_tarvos_reinit_session` (already added, ~line 447-480)
 
 ## Gotchas
-- Phase 2 prompt must intercept before the `continue_mode=1` auto-set in the stopped branch of `cmd_begin`
-- list-tui.sh:406 still uses `begin --continue` and `begin --bg` — update in Phase 4
+- Phase 3: for foreground (no PID file) sessions, skip detach_stop and go straight to _tarvos_reject_force
+- Phase 4 adds actual detach_start to cmd_begin — Phase 3 "start fresh detached" still uses current foreground path for now

@@ -444,6 +444,40 @@ _init_display_with_preview() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# Private helpers (no CLI parsing, no prompts)
+# ──────────────────────────────────────────────────────────────
+
+# _tarvos_reject_force <session_name>
+# Core reject logic: worktree remove, branch delete, session delete.
+# Callers must have already sourced session-manager, branch-manager,
+# worktree-manager, and called session_load so SESSION_BRANCH is set.
+# Does NOT prompt for confirmation.
+_tarvos_reject_force() {
+    local session_name="$1"
+
+    if worktree_exists "$session_name"; then
+        worktree_remove "$session_name" || true
+    fi
+
+    if [[ -n "${SESSION_BRANCH:-}" ]]; then
+        branch_delete "$SESSION_BRANCH" || true
+    fi
+
+    session_delete "$session_name"
+}
+
+# _tarvos_reinit_session <prd_file> <session_name> <token_limit> <max_loops>
+# Core init logic: calls session_init only. No CLI parsing, no PRD preview.
+_tarvos_reinit_session() {
+    local prd_file="$1"
+    local session_name="$2"
+    local token_limit="$3"
+    local max_loops="$4"
+
+    session_init "$session_name" "$prd_file" "$token_limit" "$max_loops"
+}
+
+# ──────────────────────────────────────────────────────────────
 # tarvos begin — reads config then runs the agent loop
 # ──────────────────────────────────────────────────────────────
 cmd_begin() {
@@ -567,28 +601,60 @@ cmd_begin() {
         # Reload so all SESSION_* vars are current
         session_load "$session_name"
     else
-        # Resumed session (stopped): always continue from existing progress.md
-        continue_mode=1
+        # Stopped session — safety prompt before discarding in-progress work
+        echo "Session '${session_name}' has an implementation in progress."
+        echo "Starting fresh will discard all existing progress and reset the implementation."
+        printf "Are you sure you want to start over? [y/N]: "
+        local restart_answer
+        IFS= read -r restart_answer </dev/tty
+        case "$restart_answer" in
+            y|Y)
+                # User confirmed: reject old session and re-init with same settings
+                echo "Resetting session '${session_name}'..."
 
-        # Use existing worktree or recreate it
-        if worktree_exists "$session_name"; then
-            WORKTREE_PATH="$SESSION_WORKTREE_PATH"
-            if [[ -z "$WORKTREE_PATH" ]]; then
-                WORKTREE_PATH="$(pwd)/$(worktree_path "${session_name}")"
-            fi
-            echo "tarvos: resuming worktree at '$(worktree_path "${session_name}")'"
-        elif [[ -n "$SESSION_BRANCH" ]]; then
-            # Worktree was removed but branch still exists — recreate it
-            local abs_wt_path
-            if ! abs_wt_path=$(worktree_create "$session_name" "$SESSION_BRANCH"); then
-                echo "tarvos: failed to recreate worktree for session '${session_name}'." >&2
-                exit 1
-            fi
-            echo "tarvos: recreated worktree at '$(worktree_path "${session_name}")'"
-            session_set_worktree_path "$session_name" "$abs_wt_path"
-            WORKTREE_PATH="$abs_wt_path"
-            session_load "$session_name"
-        fi
+                local saved_prd="$SESSION_PRD_FILE"
+                local saved_token_limit="$SESSION_TOKEN_LIMIT"
+                local saved_max_loops="$SESSION_MAX_LOOPS"
+
+                _tarvos_reject_force "$session_name"
+
+                if ! _tarvos_reinit_session "$saved_prd" "$session_name" "$saved_token_limit" "$saved_max_loops"; then
+                    echo "tarvos begin: failed to re-initialize session '${session_name}'." >&2
+                    exit 1
+                fi
+
+                # Reload freshly created session and create branch + worktree (same as initialized path)
+                session_load "$session_name" || exit 1
+
+                local original_branch
+                if ! original_branch=$(branch_get_current); then
+                    exit 1
+                fi
+
+                local new_branch
+                if ! new_branch=$(branch_create "$session_name"); then
+                    exit 1
+                fi
+
+                echo "tarvos: created branch '${new_branch}'"
+                session_set_branch "$session_name" "$new_branch" "$original_branch"
+
+                local abs_wt_path
+                if ! abs_wt_path=$(worktree_create "$session_name" "$new_branch"); then
+                    echo "tarvos: failed to create worktree for session '${session_name}'." >&2
+                    exit 1
+                fi
+
+                echo "tarvos: worktree at '$(worktree_path "${session_name}")'"
+                session_set_worktree_path "$session_name" "$abs_wt_path"
+                WORKTREE_PATH="$abs_wt_path"
+                session_load "$session_name"
+                ;;
+            *)
+                echo "Use 'tarvos continue ${session_name}' to resume where it left off."
+                exit 0
+                ;;
+        esac
     fi
 
     # Protocol file (SKILL.md in the tarvos-skill folder)
