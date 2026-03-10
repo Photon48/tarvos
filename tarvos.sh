@@ -91,6 +91,27 @@ EOF
     exit 0
 }
 
+usage_continue() {
+    cat <<EOF
+Usage: tarvos continue <session-name>
+
+Resume a stopped session from its existing progress checkpoint.
+
+Behavior:
+  - Only works on sessions in 'stopped' status.
+  - Reuses the existing git worktree and branch.
+  - Starts the session in background (detached mode).
+  - Use 'tarvos attach <name>' to follow live output.
+
+Example:
+  tarvos continue auth-feature
+
+For running sessions, use 'tarvos tui' to monitor progress.
+For initialized sessions, use 'tarvos begin' to start fresh.
+EOF
+    exit 0
+}
+
 usage_attach() {
     cat <<EOF
 Usage: tarvos attach <session-name>
@@ -428,13 +449,10 @@ _init_display_with_preview() {
 cmd_begin() {
     local session_name=""
     local continue_mode=0
-    local bg_mode=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) usage_begin ;;
-            --continue) continue_mode=1; shift ;;
-            --bg)       bg_mode=1; shift ;;
             -*)
                 echo "tarvos begin: unknown option: $1" >&2
                 usage_begin
@@ -549,7 +567,10 @@ cmd_begin() {
         # Reload so all SESSION_* vars are current
         session_load "$session_name"
     else
-        # Resumed session: use existing worktree or recreate it
+        # Resumed session (stopped): always continue from existing progress.md
+        continue_mode=1
+
+        # Use existing worktree or recreate it
         if worktree_exists "$session_name"; then
             WORKTREE_PATH="$SESSION_WORKTREE_PATH"
             if [[ -z "$WORKTREE_PATH" ]]; then
@@ -585,24 +606,6 @@ cmd_begin() {
         PROJECT_DIR="$(pwd)"
     fi
 
-    # ── Background / detached mode ──────────────────────────────
-    if (( bg_mode )); then
-        # Check that the session isn't already running in background
-        if detach_is_running "$session_name"; then
-            local existing_pid
-            existing_pid=$(detach_get_pid "$session_name")
-            echo "tarvos begin: session '${session_name}' is already running in the background (PID: ${existing_pid})." >&2
-            exit 1
-        fi
-
-        # Mark session as running before we hand off to nohup
-        session_set_status "$session_name" "running"
-        session_mark_started "$session_name"
-
-        detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR"
-        exit 0
-    fi
-
     # ── Foreground mode ─────────────────────────────────────────
     # Source library modules (now that we know everything is valid)
     source "${SCRIPT_DIR}/lib/log-manager.sh"
@@ -619,6 +622,147 @@ cmd_begin() {
     CONTINUE_MODE="$continue_mode"
     CURRENT_SESSION_NAME="$session_name"
     run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE" "$session_name"
+}
+
+# ──────────────────────────────────────────────────────────────
+# tarvos continue — resume a stopped session from progress.md
+# ──────────────────────────────────────────────────────────────
+cmd_continue() {
+    local session_name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_continue ;;
+            -*)
+                echo "tarvos continue: unknown option: $1" >&2
+                usage_continue
+                ;;
+            *)
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos continue: unexpected argument: $1" >&2
+                    usage_continue
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos continue: missing required argument <session-name>" >&2
+        usage_continue
+    fi
+
+    # Validate dependencies
+    if ! command -v jq &>/dev/null; then
+        echo "tarvos continue: jq is required but not installed." >&2
+        exit 1
+    fi
+    if ! command -v claude &>/dev/null; then
+        echo "tarvos continue: claude CLI not found in PATH." >&2
+        exit 1
+    fi
+
+    # Source session manager, branch manager, worktree manager, and detach manager
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/branch-manager.sh"
+    source "${SCRIPT_DIR}/lib/worktree-manager.sh"
+    source "${SCRIPT_DIR}/lib/detach-manager.sh"
+
+    if ! session_exists "$session_name"; then
+        echo "tarvos continue: session '${session_name}' not found. Run \`tarvos init <prd-path> --name ${session_name}\` first." >&2
+        exit 1
+    fi
+
+    session_load "$session_name" || exit 1
+
+    # Only allow continuing stopped sessions
+    case "$SESSION_STATUS" in
+        running)
+            echo "tarvos continue: session '${session_name}' is already running." >&2
+            echo "  View it in the TUI: tarvos tui" >&2
+            exit 1
+            ;;
+        initialized)
+            echo "tarvos continue: session '${session_name}' has not been started yet." >&2
+            echo "  Use 'tarvos begin ${session_name}' to start it." >&2
+            exit 1
+            ;;
+        done)
+            echo "tarvos continue: session '${session_name}' is already done. Use \`tarvos accept\` or \`tarvos reject\`." >&2
+            exit 1
+            ;;
+        failed)
+            echo "tarvos continue: session '${session_name}' has failed. Use \`tarvos reject\` to remove it." >&2
+            exit 1
+            ;;
+    esac
+
+    # Session is stopped — validate before handing off to background begin
+    local PRD_FILE="$SESSION_PRD_FILE"
+
+    # Validate PRD still exists
+    if [[ ! -f "$PRD_FILE" ]]; then
+        echo "tarvos continue: PRD file not found: $PRD_FILE" >&2
+        echo "Re-run \`tarvos init <prd-path> --name ${session_name}\` with the correct path." >&2
+        exit 1
+    fi
+
+    # Ensure git working directory is clean before touching branches
+    if ! branch_ensure_clean; then
+        exit 1
+    fi
+
+    local WORKTREE_PATH=""
+
+    # Use existing worktree or recreate it from the branch
+    if worktree_exists "$session_name"; then
+        WORKTREE_PATH="$SESSION_WORKTREE_PATH"
+        if [[ -z "$WORKTREE_PATH" ]]; then
+            WORKTREE_PATH="$(pwd)/$(worktree_path "${session_name}")"
+        fi
+        echo "tarvos: resuming worktree at '$(worktree_path "${session_name}")'"
+    elif [[ -n "$SESSION_BRANCH" ]]; then
+        # Worktree was removed but branch still exists — recreate it
+        local abs_wt_path
+        if ! abs_wt_path=$(worktree_create "$session_name" "$SESSION_BRANCH"); then
+            echo "tarvos: failed to recreate worktree for session '${session_name}'." >&2
+            exit 1
+        fi
+        echo "tarvos: recreated worktree at '$(worktree_path "${session_name}")'"
+        session_set_worktree_path "$session_name" "$abs_wt_path"
+        WORKTREE_PATH="$abs_wt_path"
+        session_load "$session_name"
+    fi
+
+    # Protocol file (SKILL.md in the tarvos-skill folder)
+    local PROTOCOL_FILE="${SCRIPT_DIR}/tarvos-skill/SKILL.md"
+    if [[ ! -f "$PROTOCOL_FILE" ]]; then
+        echo "tarvos continue: skill file not found: $PROTOCOL_FILE" >&2
+        exit 1
+    fi
+
+    # Project directory: use the worktree for isolation, or CWD if no worktree
+    local PROJECT_DIR
+    if [[ -n "$WORKTREE_PATH" ]] && [[ -d "$WORKTREE_PATH" ]]; then
+        PROJECT_DIR="$WORKTREE_PATH"
+    else
+        PROJECT_DIR="$(pwd)"
+    fi
+
+    # Check that the session isn't already running in background
+    if detach_is_running "$session_name"; then
+        local existing_pid
+        existing_pid=$(detach_get_pid "$session_name")
+        echo "tarvos continue: session '${session_name}' is already running in the background (PID: ${existing_pid})." >&2
+        exit 1
+    fi
+
+    # Always run detached — background tarvos begin will handle status transition
+    # and pick up continue_mode=1 automatically (stopped sessions always resume)
+    detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR"
+    exit 0
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1390,14 +1534,15 @@ main() {
     shift
 
     case "$cmd" in
-        init)    cmd_init "$@" ;;
-        begin)   cmd_begin "$@" ;;
-        attach)  cmd_attach "$@" ;;
-        stop)    cmd_stop "$@" ;;
-        list)    cmd_list "$@" ;;
-        accept)  cmd_accept "$@" ;;
-        reject)  cmd_reject "$@" ;;
-        migrate) cmd_migrate "$@" ;;
+        init)     cmd_init "$@" ;;
+        begin)    cmd_begin "$@" ;;
+        continue) cmd_continue "$@" ;;
+        attach)   cmd_attach "$@" ;;
+        stop)     cmd_stop "$@" ;;
+        list)     cmd_list "$@" ;;
+        accept)   cmd_accept "$@" ;;
+        reject)   cmd_reject "$@" ;;
+        migrate)  cmd_migrate "$@" ;;
         -h|--help) usage_root ;;
         *)
             echo "tarvos: unknown command: ${cmd}" >&2
