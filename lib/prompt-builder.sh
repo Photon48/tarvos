@@ -2,13 +2,14 @@
 # prompt-builder.sh - Builds composite prompts for each Tarvos iteration
 
 # Build the main prompt for an iteration
-# Args: $1 = PRD file path, $2 = protocol file path, $3 = project directory
+# Args: $1 = PRD file path, $2 = protocol file path, $3 = project directory, $4 = progress file (optional, overrides default)
 # Outputs the composite prompt to stdout
 build_prompt() {
     local prd_file="$1"
     local protocol_file="$2"
     local project_dir="$3"
-    local progress_file="${project_dir}/progress.md"
+    # Allow explicit progress file override (for session-based runs)
+    local progress_file="${4:-${project_dir}/progress.md}"
 
     local prompt=""
 
@@ -82,10 +83,11 @@ PROMPT
 }
 
 # Build the recovery prompt when progress.md is missing
-# Args: $1 = project directory
+# Args: $1 = project directory, $2 = progress file path (optional, defaults to project_dir/progress.md)
 # Outputs the prompt to stdout
 build_recovery_prompt() {
     local project_dir="$1"
+    local progress_file="${2:-${project_dir}/progress.md}"
 
     cat <<PROMPT
 You are a recovery agent for the Tarvos orchestration system. The previous agent completed work but failed to write a progress.md file.
@@ -95,7 +97,8 @@ Examine the current state of the project in "${project_dir}":
 - Look at what files exist and their state
 - Determine what phase of work was being done
 
-Then write a progress.md file in the project root. KEEP IT UNDER 40 LINES. Use this format:
+Then write a progress.md file at: ${progress_file}
+KEEP IT UNDER 40 LINES. Use this format:
 
 \`\`\`markdown
 # Progress Report

@@ -259,11 +259,12 @@ run_continuation_session() {
 }
 
 # Run a standalone recovery session when progress.md is missing
-# Args: $1 = prompt, $2 = project directory
+# Args: $1 = prompt, $2 = project directory, $3 = expected progress file path (optional)
 # Returns: 0 on success, 1 on failure
 run_recovery_session() {
     local prompt="$1"
     local project_dir="$2"
+    local expected_progress_file="${3:-${project_dir}/progress.md}"
 
     log_warning "Running standalone recovery session to generate progress.md..."
 
@@ -289,7 +290,7 @@ run_recovery_session() {
     fi
     rm -f "$stderr_log"
 
-    if [[ -f "${project_dir}/progress.md" ]]; then
+    if [[ -f "$expected_progress_file" ]]; then
         log_success "Recovery session created progress.md"
         return 0
     else

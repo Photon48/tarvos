@@ -44,35 +44,36 @@ CLAUDE_PID=""
 # ──────────────────────────────────────────────────────────────
 usage_init() {
     cat <<EOF
-Usage: tarvos init <path-to-prd.md> [options]
+Usage: tarvos init <path-to-prd.md> --name <session-name> [options]
 
 Options:
+  --name <name>       Session name (required, alphanumeric + hyphens)
   --token-limit <N>   Token limit before forcing handoff (default: ${DEFAULT_TOKEN_LIMIT})
   --max-loops <N>     Maximum number of loop iterations (default: ${DEFAULT_MAX_LOOPS})
   --no-preview        Skip the AI preview and write config immediately
   -h, --help          Show this help message
 
 Example:
-  tarvos init ./my-project.prd.md
-  tarvos init /path/to/project.prd.md --token-limit 80000 --max-loops 20
-  tarvos init ./plan.md --no-preview
+  tarvos init ./my-project.prd.md --name auth-feature
+  tarvos init /path/to/project.prd.md --name bugfix --token-limit 80000 --max-loops 20
+  tarvos init ./plan.md --name new-api --no-preview
 EOF
     exit 0
 }
 
 usage_begin() {
     cat <<EOF
-Usage: tarvos begin [options]
+Usage: tarvos begin <session-name> [options]
 
 Options:
   --continue          Resume from existing progress.md instead of starting fresh
   -h, --help          Show this help message
 
 Example:
-  tarvos begin
-  tarvos begin --continue
+  tarvos begin auth-feature
+  tarvos begin auth-feature --continue
 
-Run \`tarvos init <prd-path>\` first to configure the session.
+Run \`tarvos init <prd-path> --name <name>\` first to create a session.
 EOF
     exit 0
 }
@@ -82,9 +83,9 @@ usage_root() {
 Usage: tarvos <command> [options]
 
 Commands:
-  init <prd-path>   Configure a new run (validates PRD, writes .tarvos/config)
-  begin             Enter TUI and run the agent loop
-  begin --continue  Resume from existing progress.md
+  init <prd-path> --name <name>   Create a new session
+  begin <name>                    Run session agent loop
+  begin <name> --continue         Resume from existing progress.md
 
 Run \`tarvos <command> --help\` for command-specific options.
 EOF
@@ -96,6 +97,7 @@ EOF
 # ──────────────────────────────────────────────────────────────
 cmd_init() {
     local prd_file=""
+    local session_name=""
     local token_limit="$DEFAULT_TOKEN_LIMIT"
     local max_loops="$DEFAULT_MAX_LOOPS"
     local no_preview=0
@@ -103,6 +105,7 @@ cmd_init() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)     usage_init ;;
+            --name)        session_name="$2"; shift 2 ;;
             --token-limit) token_limit="$2"; shift 2 ;;
             --max-loops)   max_loops="$2";   shift 2 ;;
             --no-preview)  no_preview=1; shift ;;
@@ -124,6 +127,11 @@ cmd_init() {
 
     if [[ -z "$prd_file" ]]; then
         echo "tarvos init: missing required argument <path-to-prd.md>" >&2
+        usage_init
+    fi
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos init: missing required option --name <session-name>" >&2
         usage_init
     fi
 
@@ -149,25 +157,24 @@ cmd_init() {
     local project_dir
     project_dir="$(pwd)"
 
-    # Write .tarvos/config
+    # Source session manager and create session
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+
     mkdir -p "${TARVOS_DIR}"
-    cat > "$TARVOS_CONFIG" <<EOF
-PRD_FILE=${prd_file}
-TOKEN_LIMIT=${token_limit}
-MAX_LOOPS=${max_loops}
-EOF
+
+    session_init "$session_name" "$prd_file" "$token_limit" "$max_loops" || exit 1
 
     if (( no_preview )); then
-        _init_display_no_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops"
+        _init_display_no_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops" "$session_name"
     else
         source "${SCRIPT_DIR}/lib/prd-preview.sh"
-        _init_display_with_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops"
+        _init_display_with_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops" "$session_name"
     fi
 }
 
 # Display: --no-preview path (fast grep-based fallback)
 _init_display_no_preview() {
-    local prd_file="$1" project_dir="$2" token_limit="$3" max_loops="$4"
+    local prd_file="$1" project_dir="$2" token_limit="$3" max_loops="$4" session_name="${5:-}"
 
     local BOLD='\033[1m' RESET='\033[0m' DIM='\033[2m' GREEN='\033[0;32m'
 
@@ -180,6 +187,9 @@ _init_display_no_preview() {
     echo ""
     echo -e "  ${BOLD}Tarvos — AI Coding Agent Orchestrator${RESET}"
     echo -e "  ${DIM}──────────────────────────────────────────────────────────${RESET}"
+    if [[ -n "$session_name" ]]; then
+        printf "  ${BOLD}%-14s${RESET}%s\n" "Session:" "$session_name"
+    fi
     printf "  ${BOLD}%-14s${RESET}%s\n" "PRD:" "$prd_file"
     printf "  ${BOLD}%-14s${RESET}%s\n" "Project:" "$project_dir"
     printf "  ${BOLD}%-14s${RESET}" "Token limit:"
@@ -197,16 +207,24 @@ _init_display_no_preview() {
     fi
 
     echo ""
-    echo -e "  ${DIM}Config written to: .tarvos/config${RESET}"
+    if [[ -n "$session_name" ]]; then
+        echo -e "  ${DIM}Session created: .tarvos/sessions/${session_name}/${RESET}"
+    else
+        echo -e "  ${DIM}Config written to: .tarvos/config${RESET}"
+    fi
     echo -e "  ${DIM}Tip: add .tarvos/ to your .gitignore${RESET}"
     echo ""
-    echo -e "  ${GREEN}${BOLD}Ready.${RESET} Run \`tarvos begin\` to start."
+    if [[ -n "$session_name" ]]; then
+        echo -e "  ${GREEN}${BOLD}Ready.${RESET} Run \`tarvos begin ${session_name}\` to start."
+    else
+        echo -e "  ${GREEN}${BOLD}Ready.${RESET} Run \`tarvos begin\` to start."
+    fi
     echo ""
 }
 
 # Display: AI-powered preview path
 _init_display_with_preview() {
-    local prd_file="$1" project_dir="$2" token_limit="$3" max_loops="$4"
+    local prd_file="$1" project_dir="$2" token_limit="$3" max_loops="$4" session_name="${5:-}"
 
     local DIM='\033[2m' RESET='\033[0m'
 
@@ -218,18 +236,19 @@ _init_display_with_preview() {
     if [[ -z "$raw_preview" ]]; then
         # claude call failed — fall back gracefully
         echo "  (Preview unavailable — falling back to heading scan)"
-        _init_display_no_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops"
+        _init_display_no_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops" "$session_name"
         return
     fi
 
     parse_preview_output "$raw_preview"
-    display_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops"
+    display_preview "$prd_file" "$project_dir" "$token_limit" "$max_loops" "$session_name"
 }
 
 # ──────────────────────────────────────────────────────────────
 # tarvos begin — reads config then runs the agent loop
 # ──────────────────────────────────────────────────────────────
 cmd_begin() {
+    local session_name=""
     local continue_mode=0
 
     while [[ $# -gt 0 ]]; do
@@ -241,40 +260,66 @@ cmd_begin() {
                 usage_begin
                 ;;
             *)
-                echo "tarvos begin: unexpected argument: $1" >&2
-                usage_begin
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos begin: unexpected argument: $1" >&2
+                    usage_begin
+                fi
+                shift
                 ;;
         esac
     done
 
-    # Read config
-    if [[ ! -f "$TARVOS_CONFIG" ]]; then
-        echo "tarvos begin: no config found. Run \`tarvos init <prd-path>\` first." >&2
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos begin: missing required argument <session-name>" >&2
+        usage_begin
+    fi
+
+    # Validate dependencies
+    if ! command -v jq &>/dev/null; then
+        echo "tarvos begin: jq is required but not installed." >&2
+        exit 1
+    fi
+    if ! command -v claude &>/dev/null; then
+        echo "tarvos begin: claude CLI not found in PATH." >&2
         exit 1
     fi
 
-    # Source the config file (key=value)
-    local PRD_FILE TOKEN_LIMIT MAX_LOOPS
-    while IFS='=' read -r key value; do
-        case "$key" in
-            PRD_FILE)    PRD_FILE="$value" ;;
-            TOKEN_LIMIT) TOKEN_LIMIT="$value" ;;
-            MAX_LOOPS)   MAX_LOOPS="$value" ;;
-        esac
-    done < "$TARVOS_CONFIG"
+    # Source session manager and load session
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
 
-    # Validate config values
-    if [[ -z "${PRD_FILE:-}" ]]; then
-        echo "tarvos begin: config is missing PRD_FILE. Re-run \`tarvos init\`." >&2
+    if ! session_exists "$session_name"; then
+        echo "tarvos begin: session '${session_name}' not found. Run \`tarvos init <prd-path> --name ${session_name}\` first." >&2
         exit 1
     fi
-    TOKEN_LIMIT="${TOKEN_LIMIT:-$DEFAULT_TOKEN_LIMIT}"
-    MAX_LOOPS="${MAX_LOOPS:-$DEFAULT_MAX_LOOPS}"
+
+    session_load "$session_name" || exit 1
+
+    # Guard against running a completed or already-running session
+    case "$SESSION_STATUS" in
+        done)
+            echo "tarvos begin: session '${session_name}' is already done. Use \`tarvos accept\` or \`tarvos reject\`." >&2
+            exit 1
+            ;;
+        running)
+            echo "tarvos begin: session '${session_name}' is already running." >&2
+            exit 1
+            ;;
+        failed)
+            echo "tarvos begin: session '${session_name}' has failed. Use \`tarvos reject\` to remove it." >&2
+            exit 1
+            ;;
+    esac
+
+    local PRD_FILE="$SESSION_PRD_FILE"
+    local TOKEN_LIMIT="$SESSION_TOKEN_LIMIT"
+    local MAX_LOOPS="$SESSION_MAX_LOOPS"
 
     # Validate PRD still exists
     if [[ ! -f "$PRD_FILE" ]]; then
         echo "tarvos begin: PRD file not found: $PRD_FILE" >&2
-        echo "Re-run \`tarvos init <prd-path>\` with the correct path." >&2
+        echo "Re-run \`tarvos init <prd-path> --name ${session_name}\` with the correct path." >&2
         exit 1
     fi
 
@@ -289,25 +334,20 @@ cmd_begin() {
     local PROJECT_DIR
     PROJECT_DIR="$(pwd)"
 
-    # Validate dependencies
-    if ! command -v jq &>/dev/null; then
-        echo "tarvos begin: jq is required but not installed." >&2
-        exit 1
-    fi
-    if ! command -v claude &>/dev/null; then
-        echo "tarvos begin: claude CLI not found in PATH." >&2
-        exit 1
-    fi
-
     # Source library modules (now that we know everything is valid)
     source "${SCRIPT_DIR}/lib/log-manager.sh"
     source "${SCRIPT_DIR}/lib/prompt-builder.sh"
     source "${SCRIPT_DIR}/lib/signal-detector.sh"
     source "${SCRIPT_DIR}/lib/context-monitor.sh"
 
+    # Mark session as running
+    session_set_status "$session_name" "running"
+    session_mark_started "$session_name"
+
     # ── Run the agent loop ──────────────────────────────────────
     CONTINUE_MODE="$continue_mode"
-    run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE"
+    CURRENT_SESSION_NAME="$session_name"
+    run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE" "$session_name"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -344,9 +384,9 @@ run_iteration() {
     text_output=$(mktemp)
     stderr_log=$(get_stderr_log "$loop_num")
 
-    # Build the prompt
+    # Build the prompt (pass session progress file if set)
     local prompt
-    prompt=$(build_prompt "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR")
+    prompt=$(build_prompt "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "${PROGRESS_FILE:-}")
 
     log_info "Launching Claude agent..."
 
@@ -419,9 +459,12 @@ run_iteration() {
 
 # ──────────────────────────────────────────────────────────────
 # Ensure progress.md exists after an iteration
+# Uses PROGRESS_FILE global (set per-session or defaults to project root)
 # ──────────────────────────────────────────────────────────────
 ensure_progress_file() {
-    if [[ -f "${PROJECT_DIR}/progress.md" ]]; then
+    local progress_file="${PROGRESS_FILE:-${PROJECT_DIR}/progress.md}"
+
+    if [[ -f "$progress_file" ]]; then
         return 0
     fi
 
@@ -430,8 +473,8 @@ ensure_progress_file() {
     tui_set_phase_info "Recovering progress.md..."
 
     local recovery_prompt
-    recovery_prompt=$(build_recovery_prompt "$PROJECT_DIR")
-    run_recovery_session "$recovery_prompt" "$PROJECT_DIR"
+    recovery_prompt=$(build_recovery_prompt "$PROJECT_DIR" "$progress_file")
+    run_recovery_session "$recovery_prompt" "$PROJECT_DIR" "$progress_file"
     return $?
 }
 
@@ -445,24 +488,40 @@ run_agent_loop() {
     TOKEN_LIMIT="$4"
     MAX_LOOPS="$5"
     local continue_mode="$6"
+    local session_name="${7:-}"
 
     cd "$PROJECT_DIR"
 
+    # Determine the progress.md location:
+    # If a session is active, use session-local progress.md; otherwise fall back to project root
+    local PROGRESS_FILE
+    if [[ -n "$session_name" ]] && [[ -d ".tarvos/sessions/${session_name}" ]]; then
+        PROGRESS_FILE=".tarvos/sessions/${session_name}/progress.md"
+    else
+        PROGRESS_FILE="${PROJECT_DIR}/progress.md"
+    fi
+
     # Handle continue / fresh start
     if (( continue_mode )); then
-        if [[ -f "${PROJECT_DIR}/progress.md" ]]; then
+        if [[ -f "$PROGRESS_FILE" ]]; then
             log_info "Continuing from existing progress.md"
         else
             log_warning "No progress.md found — starting fresh"
         fi
     else
-        if [[ -f "${PROJECT_DIR}/progress.md" ]]; then
-            rm -f "${PROJECT_DIR}/progress.md"
+        if [[ -f "$PROGRESS_FILE" ]]; then
+            rm -f "$PROGRESS_FILE"
         fi
     fi
 
-    # Initialize logging
-    init_logging "$PROJECT_DIR"
+    # Initialize logging: use session logs folder if session is active
+    local log_base_dir
+    if [[ -n "$session_name" ]] && [[ -d ".tarvos/sessions/${session_name}" ]]; then
+        log_base_dir=".tarvos/sessions/${session_name}"
+    else
+        log_base_dir="$PROJECT_DIR"
+    fi
+    init_logging "$log_base_dir"
 
     # Initialize TUI dashboard
     tui_init "$MAX_LOOPS" "$TOKEN_LIMIT"
@@ -484,6 +543,9 @@ run_agent_loop() {
     log_info "PRD: ${PRD_FILE}"
     log_info "Project: ${PROJECT_DIR}"
     log_info "Token limit: ${TOKEN_LIMIT}"
+    if [[ -n "$session_name" ]]; then
+        log_info "Session: ${session_name}"
+    fi
     if (( continue_mode )); then
         log_info "Mode: continue"
     fi
@@ -495,6 +557,11 @@ run_agent_loop() {
 
     while (( loop_num < MAX_LOOPS )); do
         (( loop_num++ ))
+
+        # Update session loop count if session-based
+        if [[ -n "$session_name" ]]; then
+            session_set_loop_count "$session_name" "$loop_num"
+        fi
 
         log_iteration_header "$loop_num" "$MAX_LOOPS"
 
@@ -525,6 +592,10 @@ run_agent_loop() {
                     log_success "All phases complete!"
                     tui_set_phase_info "All phases complete"
                     final_signal="$DETECTED_SIGNAL"
+                    if [[ -n "$session_name" ]]; then
+                        session_set_status "$session_name" "done"
+                        session_set_final_signal "$session_name" "$final_signal"
+                    fi
                     break
                     ;;
                 PHASE_COMPLETE)
@@ -561,6 +632,16 @@ run_agent_loop() {
     fi
 
     final_signal="${final_signal:-UNKNOWN}"
+
+    # Update session final state
+    if [[ -n "$session_name" ]] && [[ "$final_signal" != "ALL_PHASES_COMPLETE" ]]; then
+        if [[ "$final_signal" == "ERROR_MAX_RETRIES" ]] || [[ "$final_signal" == "UNKNOWN" ]]; then
+            session_set_status "$session_name" "failed"
+        else
+            session_set_status "$session_name" "stopped"
+        fi
+        session_set_final_signal "$session_name" "$final_signal"
+    fi
 
     log_final_summary "$loop_num" "$final_signal" "$start_time"
 

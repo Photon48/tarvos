@@ -23,9 +23,8 @@ cd tarvos
 Then from your project repo:
 
 ```bash
-tarvos init path/to/your-plan.md   # preview the plan, write .tarvos/config
-tarvos begin                        # enter TUI and run the agent loop
-tarvos begin --continue             # resume from existing progress.md
+tarvos init path/to/your-plan.md --name my-feature
+tarvos begin my-feature
 ```
 
 ---
@@ -34,9 +33,9 @@ tarvos begin --continue             # resume from existing progress.md
 
 Write a planning document describing what you want to build — phases, sprints, milestones, a task list, whatever structure makes sense for your project. See [`example.prd.md`](./example.prd.md) for an example.
 
-**`tarvos init <plan>`** reads your document, identifies the work units, and flags any obvious problems before you commit to a run.
+**`tarvos init <plan> --name <name>`** reads your document, previews it, and creates a named session.
 
-**`tarvos begin`** enters a full-screen TUI and starts the agent loop. Each iteration launches a fresh Claude Code agent against your plan. When an agent finishes a phase, a new agent picks up from there.
+**`tarvos begin <name>`** enters a full-screen TUI and starts the agent loop. Each iteration launches a fresh Claude Code agent against your plan. When an agent finishes a phase, a new agent picks up from there.
 
 The loop runs until all phases are complete, max loops is reached, or you press `Ctrl+C`.
 
@@ -44,34 +43,30 @@ The loop runs until all phases are complete, max loops is reached, or you press 
 
 ## Commands
 
-### `tarvos init <path-to-plan> [options]`
+### `tarvos init <path-to-plan> --name <name> [options]`
 
-Validates and previews the plan, then writes `.tarvos/config`.
+Previews the plan and creates a named session under `.tarvos/sessions/<name>/`.
 
 | Option | Default | Description |
 |---|---|---|
+| `--name <name>` | required | A unique name for this session (alphanumeric + hyphens) |
 | `--token-limit N` | `100000` | Token threshold that triggers a handoff to a fresh agent |
 | `--max-loops N` | `50` | Maximum agent iterations before stopping |
-| `--no-preview` | — | Skip the AI preview; parse headings locally and write config immediately |
+| `--no-preview` | — | Skip the AI preview and create the session immediately |
 
-The preview reads your plan regardless of structure and reports:
-- **VALID** — coherent plan, ready to go
-- **WARN** — usable but something worth knowing (e.g. vague scope, no acceptance criteria)
-- **INVALID** — not a workable plan; config is still written so you can proceed if you want
+### `tarvos begin <name> [--continue]`
 
-### `tarvos begin [--continue]`
+Starts the agent loop for the named session.
 
-Reads `.tarvos/config` and starts the agent loop. Errors clearly if `init` hasn't been run.
-
-`--continue` resumes from an existing `progress.md` instead of starting fresh.
+`--continue` resumes from an existing progress checkpoint instead of starting fresh.
 
 ---
 
 ## State and logs
 
-- **`.tarvos/config`** — written by `init`, read by `begin`. Add `.tarvos/` to your `.gitignore`.
-- **`progress.md`** — tracks where the current run is up to. Lives in your project root. Safe to delete between runs.
-- **`logs/tarvos/run-<timestamp>/`** — per-run logs and a dashboard summary.
+- **`.tarvos/sessions/<name>/`** — all state for a session lives here. Add `.tarvos/` to your `.gitignore`.
+- **`progress.md`** — written per-session to track where the current run is up to.
+- **Logs** — stored per-session under `.tarvos/sessions/<name>/logs/`.
 
 ---
 

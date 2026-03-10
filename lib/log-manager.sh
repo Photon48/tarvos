@@ -55,10 +55,16 @@ MAX_ACTIVITY=8
 # Logging init
 # ──────────────────────────────────────────────────────────────
 init_logging() {
-    local project_dir="$1"
+    local base_dir="$1"
     local timestamp
     timestamp=$(date +%Y%m%d-%H%M%S)
-    LOG_DIR="${project_dir}/logs/tarvos/run-${timestamp}"
+    # If the base_dir looks like a session folder (.tarvos/sessions/<name>), use its logs/ directly.
+    # Otherwise keep the legacy project-level path.
+    if [[ "$base_dir" == *"/.tarvos/sessions/"* ]] || [[ "$base_dir" == ".tarvos/sessions/"* ]]; then
+        LOG_DIR="${base_dir}/logs/run-${timestamp}"
+    else
+        LOG_DIR="${base_dir}/logs/tarvos/run-${timestamp}"
+    fi
     mkdir -p "$LOG_DIR"
     DASHBOARD_LOG="${LOG_DIR}/dashboard.log"
     touch "$DASHBOARD_LOG"
