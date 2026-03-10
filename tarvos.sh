@@ -69,6 +69,11 @@ Options:
   --continue          Resume from existing progress.md instead of starting fresh
   -h, --help          Show this help message
 
+Behavior:
+  - Requires a clean working directory (no uncommitted changes).
+  - On first run: creates a 'tarvos/<name>-<timestamp>' branch and checks it out.
+  - On resume:    checks out the existing session branch.
+
 Example:
   tarvos begin auth-feature
   tarvos begin auth-feature --continue
@@ -84,7 +89,7 @@ Usage: tarvos <command> [options]
 
 Commands:
   init <prd-path> --name <name>   Create a new session
-  begin <name>                    Run session agent loop
+  begin <name>                    Run session agent loop (creates git branch)
   begin <name> --continue         Resume from existing progress.md
 
 Run \`tarvos <command> --help\` for command-specific options.
@@ -286,8 +291,9 @@ cmd_begin() {
         exit 1
     fi
 
-    # Source session manager and load session
+    # Source session manager and branch manager
     source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/branch-manager.sh"
 
     if ! session_exists "$session_name"; then
         echo "tarvos begin: session '${session_name}' not found. Run \`tarvos init <prd-path> --name ${session_name}\` first." >&2
@@ -321,6 +327,41 @@ cmd_begin() {
         echo "tarvos begin: PRD file not found: $PRD_FILE" >&2
         echo "Re-run \`tarvos init <prd-path> --name ${session_name}\` with the correct path." >&2
         exit 1
+    fi
+
+    # ── Branch isolation ────────────────────────────────────────
+    # Ensure git working directory is clean before touching branches
+    if ! branch_ensure_clean; then
+        exit 1
+    fi
+
+    if [[ "$SESSION_STATUS" == "initialized" ]]; then
+        # Fresh session: record original branch, create tarvos/* branch
+        local original_branch
+        if ! original_branch=$(branch_get_current); then
+            exit 1
+        fi
+
+        local new_branch
+        if ! new_branch=$(branch_create "$session_name"); then
+            exit 1
+        fi
+
+        echo "tarvos: created branch '${new_branch}'"
+
+        # Persist branch info into session state
+        session_set_branch "$session_name" "$new_branch" "$original_branch"
+
+        # Reload so SESSION_BRANCH / SESSION_ORIGINAL_BRANCH are current
+        session_load "$session_name"
+    else
+        # Resumed session: checkout the existing session branch
+        if [[ -n "$SESSION_BRANCH" ]]; then
+            if ! branch_checkout "$SESSION_BRANCH"; then
+                exit 1
+            fi
+            echo "tarvos: checked out branch '${SESSION_BRANCH}'"
+        fi
     fi
 
     # Protocol file (SKILL.md in the tarvos-skill folder)

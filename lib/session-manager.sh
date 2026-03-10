@@ -327,6 +327,30 @@ session_set_final_signal() {
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
 
+# Update branch and original_branch in session state and registry
+# Args: $1 = name, $2 = branch, $3 = original_branch
+session_set_branch() {
+    local name="$1"
+    local branch="$2"
+    local original_branch="$3"
+    local state_file
+    state_file=$(session_state_file "$name")
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg branch "$branch" \
+       --arg original_branch "$original_branch" \
+       --arg now "$now" \
+       '.branch = $branch | .original_branch = $original_branch | .last_activity = $now' \
+       "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+
+    local status
+    status=$(jq -r '.status' "$state_file")
+    registry_update "$name" "$status" "$branch" "$original_branch" "$now"
+}
+
 # Mark session as started (set started_at timestamp)
 # Args: $1 = name
 session_mark_started() {
