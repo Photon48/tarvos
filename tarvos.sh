@@ -198,17 +198,34 @@ usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
 
+Tarvos orchestrates a chain of fresh AI agents on a single plan, each picking
+up where the last left off. Every session runs on its own git branch — accept
+good work, reject experiments, without touching git yourself.
+
 Commands:
   init <prd-path> --name <name>   Create a new session
   begin <name>                    Run session agent loop (creates git branch)
-  begin <name> --continue         Resume from existing progress.md
-  begin <name> --bg               Run session in background (detached)
+  begin <name> --continue         Resume from existing progress checkpoint
+  begin <name> --bg               Run session in the background (detached)
   attach <name>                   Follow live output of a background session
   stop <name>                     Stop a running background session
-  list                            Show all sessions (interactive TUI)
+  list                            Show all sessions in an interactive TUI
   accept <name>                   Merge completed session branch and archive
   reject <name> [--force]         Delete session branch and remove session
   migrate                         Migrate legacy .tarvos/config to session format
+
+Session lifecycle:
+  init → begin → done → accept   (branch merged, session archived)
+                      ↘ reject   (branch + session deleted)
+         begin → stopped → begin  (resume later)
+                         ↘ reject
+
+Session status values:
+  initialized   Created, not yet started
+  running       Agent loop is active
+  stopped       Paused (can be resumed with begin)
+  done          All phases complete (ready to accept or reject)
+  failed        Exceeded retries or hit an unrecoverable error
 
 Run \`tarvos <command> --help\` for command-specific options.
 EOF
