@@ -1,19 +1,19 @@
 # Progress Report
 
 ## Current Status
-Phase 2 of 7: GitHub Actions release workflow
+Phase 3 of 7: New curl-based install script
 Status: COMPLETED
 
 ## What Was Done This Session
-- .github/workflows/release.yml: Created release workflow triggered on v* tags; builds all 4 platform TUI binaries and uploads them as GitHub Release assets
+- install.sh: Rewrote as standalone curl-piped installer (platform detection, downloads jq + TUI binary + tarball, symlinks, skill install)
+- .github/workflows/release.yml: Added tarball build step that packages tarvos.sh + lib/ + tarvos-skill/ as tarvos-$VERSION.tar.gz and uploads it as a release asset
 
 ## Immediate Next Task
-Begin Phase 3: Replace install.sh with a standalone curl-piped installer that downloads jq and TUI binaries from GitHub Releases, extracts a tarball, and symlinks tarvos to /usr/local/bin.
+Begin Phase 4: Update tarvos.sh — (4a) replace bun resolution block with dev comment, (4b) add jq+TUI binary resolution block, (4c) update TUI invocations, (4d) remove jq prerequisite guards.
 
 ## Key Files for Next Task
-- install.sh (rewrite existing file)
+- tarvos.sh (multiple edits: lines ~25-30 for bun block, add resolution block after, update TUI invocations at ~1089 and ~1761, remove jq guards in cmd_init/begin/continue/migrate)
 
 ## Gotchas
-- install.sh must be self-contained (no dependency on local git clone)
-- tarvos.sh depends on lib/ — release must ship a tarball; installer extracts it
-- macOS: run xattr -dr com.apple.quarantine on downloaded binaries (Gatekeeper)
+- tarvos.sh uses `exec "$_TUI_BIN"` pattern — both TUI call sites need the guard + exec replacement
+- jq guards use `command -v jq` — search for these in cmd_init, cmd_begin, cmd_continue, cmd_migrate
