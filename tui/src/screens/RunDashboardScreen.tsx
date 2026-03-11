@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useReducer, useRef } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { theme, BRAILLE_SPINNER, statusColors, statusIcons } from "../theme"
-import { watchEventsFile } from "../data/events"
+import { watchLogDir } from "../data/events"
 import { loadSessions, getSessionDir } from "../data/sessions"
 import { runTarvosCommand } from "../commands"
 import type { Session, TuiEvent } from "../types"
@@ -50,6 +50,7 @@ interface RunState {
 type RunAction =
   | { type: "SESSION_LOADED"; session: Session }
   | { type: "EVENT"; event: TuiEvent }
+  | { type: "LOOP_START"; loop: number }
   | { type: "SCROLL_UP" }
   | { type: "SCROLL_DOWN" }
   | { type: "TOGGLE_VIEW" }
@@ -94,6 +95,9 @@ function reducer(state: RunState, action: RunAction): RunState {
         currentSignal: s.final_signal ?? "",
       }
     }
+    case "LOOP_START": {
+      return { ...state, currentLoop: action.loop }
+    }
     case "EVENT": {
       const ev = action.event
       const logLine: LogEntry = {
@@ -131,6 +135,11 @@ function reducer(state: RunState, action: RunAction): RunState {
         if (["IDLE","RUNNING","CONTEXT_LIMIT","CONTINUATION","RECOVERY","DONE","ERROR"].includes(rawStatus)) {
           newState.status = rawStatus as RunStatus
         }
+      }
+      if (ev.type === "loop_start" && ev.loop !== undefined) {
+        newState.currentLoop = ev.loop
+        // When a new loop starts, mark as RUNNING
+        newState.status = "RUNNING"
       }
 
       return newState
@@ -496,16 +505,67 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     }
   }, [sessionDir, refreshSession])
 
-  // Watch events file for the current loop
+  // Watch the entire logDir for events across all loops.
+  // If log_dir is not yet set (session just started), poll state.json every 500ms
+  // for up to 15s until log_dir is populated, then attach the watcher.
+  const logDirWatcherRef = useRef<(() => void) | null>(null)
+  const logDirPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
+    // Teardown any previous watcher/poller
+    logDirWatcherRef.current?.()
+    logDirWatcherRef.current = null
+    if (logDirPollRef.current) {
+      clearInterval(logDirPollRef.current)
+      logDirPollRef.current = null
+    }
+
     const logDir = session?.log_dir ?? ""
-    if (!logDir) return  // log_dir not yet written (session hasn't started first loop)
-    const loopNum = runState.currentLoop > 0 ? runState.currentLoop : 1
-    const cleanup = watchEventsFile(logDir, loopNum, (event) => {
-      dispatch({ type: "EVENT", event })
-    })
-    return cleanup
-  }, [session?.log_dir, runState.currentLoop])
+
+    const attachWatcher = (dir: string) => {
+      const cleanup = watchLogDir(dir, (event: TuiEvent) => {
+        dispatch({ type: "EVENT", event })
+      })
+      logDirWatcherRef.current = cleanup
+    }
+
+    if (logDir) {
+      attachWatcher(logDir)
+    } else {
+      // Poll state.json until log_dir appears (up to 15s, every 500ms)
+      let pollCount = 0
+      const MAX_POLLS = 30 // 30 × 500ms = 15s
+      logDirPollRef.current = setInterval(async () => {
+        pollCount++
+        if (pollCount > MAX_POLLS) {
+          clearInterval(logDirPollRef.current!)
+          logDirPollRef.current = null
+          return
+        }
+        try {
+          const { loadSessions: ls } = await import("../data/sessions")
+          const sessions = await ls()
+          const found = sessions.find(s => s.name === sessionName)
+          if (found?.log_dir) {
+            clearInterval(logDirPollRef.current!)
+            logDirPollRef.current = null
+            // Update session state and attach watcher
+            dispatch({ type: "SESSION_LOADED", session: found })
+            attachWatcher(found.log_dir)
+          }
+        } catch {}
+      }, 500)
+    }
+
+    return () => {
+      logDirWatcherRef.current?.()
+      logDirWatcherRef.current = null
+      if (logDirPollRef.current) {
+        clearInterval(logDirPollRef.current)
+        logDirPollRef.current = null
+      }
+    }
+  }, [session?.log_dir, sessionName])
 
   // Elapsed time counter
   useEffect(() => {

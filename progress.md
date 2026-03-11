@@ -1,21 +1,19 @@
 # Progress Report
 
 ## Current Status
-Phase 2 of 5: State Management & Session UX
+Phase 3 of 5: RunDashboard Live Monitoring Fixes
 Status: COMPLETED
 
 ## What Was Done This Session
-- tui/src/data/sessions.ts: Exported TARVOS_SESSIONS_DIR constant
-- tui/src/screens/SessionListScreen.tsx: Optimistic accept removal (2.1) — setSessions filter on accept
-- tui/src/screens/SessionListScreen.tsx: pendingActions Set<string> state with onPendingStart/onPendingEnd (2.2)
-- tui/src/screens/SessionListScreen.tsx: ActionOverlay updated to accept/use pendingActions + show "Processing..." when pending
-- tui/src/screens/SessionListScreen.tsx: Immediate refresh after begin and accept quick-key actions (2.3)
-- tui/src/screens/SessionListScreen.tsx: fs.watch on TARVOS_SESSIONS_DIR with recursive:true for near-instant updates (2.4)
+- tui/src/data/events.ts: Replaced single-file watcher with watchLogDir() — watches entire logDir, drains all loop-NNN-events.jsonl files; fallback to 1s polling if fs.watch fails
+- tui/src/types.ts: Added `loop` and `ts` fields to TuiEvent interface
+- tui/src/screens/RunDashboardScreen.tsx: Switched to watchLogDir; added log_dir polling (500ms, 15s max) when log_dir is empty on mount; LOOP_START action in reducer updates currentLoop and sets status RUNNING; loop_start events via EVENT path also update currentLoop
+- tarvos.sh: Emit loop_start + launching status at top of run_iteration(); emit context_limit status on context limit; emit running status after successful iteration; emit done status on ALL_PHASES_COMPLETE
 
 ## Immediate Next Task
-Begin Phase 3: RunDashboard Live Monitoring Fixes — multi-loop events watcher, loop_start shell event, log_dir polling, status events.
+Begin Phase 4: Full TUI Visual Redesign — create Owl.tsx component, redesign SessionListScreen and RunDashboardScreen layouts, add theme.ts owl colors.
 
 ## Key Files for Next Task
-- tui/src/screens/RunDashboardScreen.tsx
-- tui/src/data/events.ts
-- tarvos.sh
+- tui/src/components/Owl.tsx (new file)
+- tui/src/screens/SessionListScreen.tsx
+- tui/src/theme.ts

@@ -18,12 +18,14 @@ export interface Session {
 }
 
 export interface TuiEvent {
-  type: string        // "tool_use" | "text" | "signal" | "status" | etc.
+  type: string        // "tool_use" | "text" | "signal" | "status" | "loop_start" | etc.
   content?: string
   tool?: string
   tokens?: number
   phase?: string
   signal?: string
+  loop?: number       // present in "loop_start" events
+  ts?: number         // unix timestamp from shell
   timestamp?: string
   raw?: string
 }

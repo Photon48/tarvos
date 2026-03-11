@@ -1412,6 +1412,14 @@ run_iteration() {
     # Initialize events log for this loop (enables emit_tui_event in context-monitor.sh)
     set_events_log "$events_log"
 
+    # Emit loop_start event so TUI knows a new loop has begun
+    local _ts
+    _ts=$(date +%s)
+    emit_tui_event "{\"type\":\"loop_start\",\"loop\":${loop_num},\"ts\":${_ts}}"
+
+    # Emit launching status
+    emit_tui_event "{\"type\":\"status\",\"content\":\"launching\",\"ts\":${_ts}}"
+
     # Build the prompt (pass session progress file if set)
     local prompt
     prompt=$(build_prompt "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "${PROGRESS_FILE:-}")
@@ -1441,6 +1449,10 @@ run_iteration() {
     # Handle context limit hit
     if (( stream_exit == 1 )) || (( CONTEXT_LIMIT_HIT )); then
         log_warning "Context limit reached ($(get_total_tokens) tokens >= ${TOKEN_LIMIT})"
+
+        local _ctx_ts
+        _ctx_ts=$(date +%s)
+        emit_tui_event "{\"type\":\"status\",\"content\":\"context_limit\",\"ts\":${_ctx_ts}}"
 
         kill_claude_process "$CLAUDE_PID"
         CLAUDE_PID=""
@@ -1615,6 +1627,11 @@ run_agent_loop() {
             log_iteration_summary "$loop_num" "$DETECTED_SIGNAL" "$ITERATION_TOKENS" "$duration_str" "$note"
             log_dashboard_entry "$loop_num" "$DETECTED_SIGNAL" "$ITERATION_TOKENS" "$duration_str" "$note"
 
+            # Emit running status after successful loop iteration
+            local _loop_ts
+            _loop_ts=$(date +%s)
+            emit_tui_event "{\"type\":\"status\",\"content\":\"running\",\"ts\":${_loop_ts}}"
+
             case "$DETECTED_SIGNAL" in
                 ALL_PHASES_COMPLETE)
                     log_success "All phases complete!"
@@ -1623,6 +1640,10 @@ run_agent_loop() {
                         session_set_status "$session_name" "done"
                         session_set_final_signal "$session_name" "$final_signal"
                     fi
+                    # Emit done status
+                    local _done_ts
+                    _done_ts=$(date +%s)
+                    emit_tui_event "{\"type\":\"status\",\"content\":\"done\",\"ts\":${_done_ts}}"
                     # Generate completion summary (non-blocking: runs then continues)
                     if [[ -n "$session_name" ]]; then
                         log_info "Generating completion summary..."
