@@ -14,13 +14,10 @@ Run multiple plans at once. Each session gets its own isolated git worktree. Whe
 
 ## Quickstart
 
-**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI, `jq`, `bash`, [`bun`](https://bun.sh)
+**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI
 
 ```bash
-git clone https://github.com/anomalyco/tarvos.git
-cd tarvos
-./install.sh          # adds 'tarvos' to /usr/local/bin
-cd tui && bun install # install the session browser UI
+curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash
 ```
 
 Then from your project:
@@ -28,7 +25,7 @@ Then from your project:
 ```bash
 tarvos init my-plan.md --name my-feature
 tarvos begin my-feature
-tarvos tui             # watch it work
+tarvos tui
 ```
 
 ---
@@ -138,6 +135,17 @@ Session must have status `done` or `failed`. Use `tarvos stop` first if the sess
 
 ---
 
+### `tarvos update [--version v0.x.y] [--force]`
+
+Download and install the latest Tarvos release (or a specific version). Replaces the TUI binary and `tarvos.sh` in place. Skips re-downloading jq unless `--force` is passed.
+
+```bash
+tarvos update               # latest release
+tarvos update --version v0.2.0
+```
+
+---
+
 ### `tarvos migrate`
 
 Upgrade a project from an older Tarvos configuration format. If you have a legacy `.tarvos/config` file from a previous Tarvos version, this command converts it to the current session format.
@@ -173,3 +181,28 @@ Everything is under `.tarvos/` in your project (automatically gitignored):
 - **`sessions/<name>/`** — session state, progress handoff notes, summary, logs
 - **`worktrees/<name>/`** — the isolated working directory for each session (removed on accept/reject/forget)
 - **`archive/<name>-<ts>/`** — archived session metadata after accept, reject, or forget
+
+---
+
+## Development
+
+To work on Tarvos itself you need [`bun`](https://bun.sh) to rebuild the TUI binary.
+
+### Rebuild the TUI
+
+```bash
+cd tui && bun install
+bun run build:darwin-arm64   # or build:darwin-x64, build:linux-x64, build:linux-arm64, build:all
+```
+
+Test your local build without reinstalling:
+
+```bash
+TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" tarvos tui
+```
+
+### Release process
+
+1. Tag a new version: `git tag v0.2.0 && git push --tags`
+2. GitHub Actions builds all platform binaries and creates the release
+3. Update `TARVOS_VERSION` in `install.sh` and commit
