@@ -66,6 +66,13 @@ Open the session browser. Run `tarvos` with no arguments or `tarvos tui`.
 
 Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open or actions menu, `s` start, `a` accept, `r` reject, `n` new session, `R` refresh, `q` quit.
 
+Actions menu (context-aware per session status):
+- **running** → View, Stop
+- **stopped** → Continue, Reject
+- **done** → Accept, Reject, View Summary
+- **initialized** → Start, Reject
+- **failed** → Reject
+
 ---
 
 ### `tarvos init <plan.md> --name <name> [options]`
@@ -108,12 +115,6 @@ Discard a session — deletes the branch and all its data. Use `--force` to skip
 ### `tarvos stop <name>`
 
 Stop a running session. Resume it later with `tarvos continue`.
-
----
-
-### `tarvos attach <name>`
-
-Follow the live log of a running session. Press `Ctrl+C` to stop following — the session keeps running.
 
 ---
 

@@ -88,7 +88,7 @@ usage_begin() {
 Usage: tarvos begin <session-name>
 
 Start the agent loop for a session. Runs in the background — use
-'tarvos tui' or 'tarvos attach <name>' to monitor progress.
+'tarvos tui' to monitor progress.
 
 Options:
   -h, --help          Show this help message
@@ -160,8 +160,8 @@ Keys:
   q         Quit
 
 Actions menu (context-aware per session status):
-  running     → Attach, Stop
-  stopped     → Resume, Reject
+  running     → View, Stop
+  stopped     → Continue, Reject
   done        → Accept, Reject, View Summary
   initialized → Start, Reject
   failed      → Reject
@@ -226,7 +226,6 @@ Commands:
   begin <name>                    Start a session (runs in the background)
   continue <name>                 Resume a stopped session
   tui                             Open the session browser (same as just 'tarvos')
-  attach <name>                   Follow live output of a running session
   stop <name>                     Stop a running session
   accept <name>                   Merge the session's changes into your branch
   reject <name> [--force]         Discard a session and all its changes
