@@ -86,9 +86,9 @@ process_stream() {
                 ' 2>/dev/null)
                 if [[ -n "$text" ]]; then
                     echo "$text" >> "$text_output"
-                    # Emit text event (truncated to 80 chars for events log)
+                    # Emit text event (truncated to 300 chars for events log)
                     if [[ -n "$_CM_EVENTS_LOG" ]] && [[ -z "$is_subagent" ]]; then
-                        local brief_text="${text:0:80}"
+                        local brief_text="${text:0:300}"
                         brief_text="${brief_text//$'\n'/ }"
                         local ts
                         ts=$(date +%s)
@@ -104,7 +104,7 @@ process_stream() {
                             .message.content[] | select(.type == "tool_use") | {
                                 type: "tool_use",
                                 tool: .name,
-                                arg: ((.input.file_path // .input.command // .input.pattern // .input.description // "") | .[0:80]),
+                                arg: ((.input.file_path // .input.command // .input.pattern // .input.description // "") | .[0:300]),
                                 id: .id
                             }
                         else

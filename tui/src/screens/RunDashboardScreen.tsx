@@ -336,6 +336,41 @@ function CompletionPanel({ session }: CompletionPanelProps) {
   )
 }
 
+// ─── wrapText helper ─────────────────────────────────────────────────────────
+
+/**
+ * Wraps `text` to fit within `maxWidth` columns, splitting at word boundaries
+ * and falling back to hard-wrap for tokens longer than `maxWidth`.
+ * Returns an array of line strings.
+ */
+function wrapText(text: string, maxWidth: number): string[] {
+  if (!text || maxWidth <= 0) return []
+  const words = text.split(/\s+/)
+  const lines: string[] = []
+  let current = ""
+
+  for (const word of words) {
+    if (!word) continue
+    if (word.length >= maxWidth) {
+      // Hard-wrap long token
+      if (current) { lines.push(current); current = "" }
+      for (let i = 0; i < word.length; i += maxWidth) {
+        lines.push(word.slice(i, i + maxWidth))
+      }
+      continue
+    }
+    const candidate = current ? `${current} ${word}` : word
+    if (candidate.length <= maxWidth) {
+      current = candidate
+    } else {
+      if (current) lines.push(current)
+      current = word
+    }
+  }
+  if (current) lines.push(current)
+  return lines
+}
+
 // ─── Agent Dashboard ──────────────────────────────────────────────────────────
 
 interface AgentDashboardProps {
@@ -374,8 +409,8 @@ function AgentDashboard({ state, session, height, terminalWidth }: AgentDashboar
   const isRunning = state.status === "RUNNING"
   const isDone = state.status === "DONE"
 
-  // Spotlight: 9 rows if DONE (CompletionPanel), else 5 rows
-  const spotlightHeight = isDone ? 9 : 5
+  // Spotlight: 9 rows if DONE (CompletionPanel), else 8 rows (1 header + 3 arg + 2 text + 2 border)
+  const spotlightHeight = isDone ? 9 : 8
   // Timeline header: 1 row
   const timelineHeaderHeight = 1
   // Timeline rows = remaining height
@@ -402,13 +437,28 @@ function AgentDashboard({ state, session, height, terminalWidth }: AgentDashboar
             paddingX={1}
             backgroundColor="#1C1C1C"
           >
-            {state.currentTool ? (
-              <>
-                <text fg={theme.muted}>CURRENTLY:  <span fg={theme.info}>{toolIcon(state.currentTool)} {state.currentTool}</span>  <span fg={theme.accent}>{state.currentArg}</span></text>
-                <text> </text>
-                <text fg={theme.muted}>{state.currentText.slice(0, Math.max(10, terminalWidth - 34))}</text>
-              </>
-            ) : (
+            {state.currentTool ? (() => {
+              const wrapCol = Math.max(10, terminalWidth - 6)
+              const argLines = wrapText(state.currentArg, wrapCol)
+              const argDisplay = argLines.length > 3
+                ? [...argLines.slice(0, 2), argLines[2].slice(0, wrapCol - 1) + "…"]
+                : argLines
+              const textLines = wrapText(state.currentText, wrapCol)
+              const textDisplay = textLines.length > 2
+                ? [textLines[0], textLines[1].slice(0, wrapCol - 1) + "…"]
+                : textLines
+              return (
+                <>
+                  <text fg={theme.muted}>CURRENTLY:  <span fg={theme.info}>{toolIcon(state.currentTool)} {state.currentTool}</span></text>
+                  {argDisplay.map((line, i) => (
+                    <text key={i} fg={theme.accent}>{line}</text>
+                  ))}
+                  {textDisplay.map((line, i) => (
+                    <text key={i} fg={theme.muted}>{line}</text>
+                  ))}
+                </>
+              )
+            })() : (
               <>
                 <text fg={theme.muted}>Waiting for agent to start...</text>
               </>
