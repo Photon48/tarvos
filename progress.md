@@ -1,20 +1,16 @@
 # Progress Report
 
 ## Current Status
-Phase 1 of 3: Events File Path Fix
+Phase 2 of 3: TUI Action Correctness & UX
 Status: COMPLETED
 
 ## What Was Done This Session
-- lib/session-manager.sh: Added `log_dir: ""` to session_init state.json; added `session_set_log_dir()` function
-- tarvos.sh (after init_logging ~1487): Added `session_set_log_dir "$session_name" "$LOG_DIR"` call
-- tui/src/types.ts: Added `log_dir: string` field to Session interface
-- tui/src/data/events.ts: Changed signature from `(sessionDir, loopNum)` to `(logDir, loopNum)`; constructs `loop-NNN-events.jsonl` with zero-padded loop number; watcher wrapped in try/catch to avoid ENOENT crash
-- tui/src/screens/RunDashboardScreen.tsx: Added `session` state; watchEventsFile now uses `session?.log_dir`; skips if logDir is empty
+- tui/src/commands.ts: Added stderr collection; return type is now `{ exitCode, stderr }`
+- tui/src/screens/SessionListScreen.tsx: Fixed ACTIONS map (view/begin/continue/reject --force); added RejectConfirmDialog; fixed executeAction to check "view" not "attach"; pass full cmd array; removed "b" key; success=green/error=red feedback; reload after reject
+- tui/src/screens/RunDashboardScreen.tsx: Removed "b" key; added "s" (stop when running) and "c" (continue when stopped); updated footer hints contextually; RunHeader now uses colored bands per status (accent=running, warning=stopped, success=done, error=failed)
 
 ## Immediate Next Task
-Begin Phase 2: Fix TUI action correctness in SessionListScreen.tsx. Start by updating the ACTIONS map and fixing executeAction to use real tarvos subcommands.
+Begin Phase 3: Add smoke tests to tests/smoke-test.sh covering worktree isolation, missing worktree abort, reject --force non-interactive, continue resume, log_dir in state.json, and no "attach" in begin output.
 
 ## Key Files for Next Task
-- tui/src/screens/SessionListScreen.tsx
-- tui/src/commands.ts
-- tui/src/screens/RunDashboardScreen.tsx
+- tests/smoke-test.sh
