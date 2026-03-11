@@ -253,7 +253,6 @@ Commands:
   init <plan.md> --name <name>    Create a new session from a plan file
   begin <name>                    Start a session (runs in the background)
   continue <name>                 Resume a stopped session
-  attach <name>                   Tail a running session's live log output
   tui                             Open the session browser (same as just 'tarvos')
   stop <name>                     Stop a running session
   accept <name>                   Merge the session's changes into your branch

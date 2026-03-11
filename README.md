@@ -124,18 +124,6 @@ Stop a running session. Resume it later with `tarvos continue`.
 
 ---
 
-### `tarvos attach <name>`
-
-Tail the live log output of a running background session in your terminal. Useful when you want to follow agent output directly without opening the TUI.
-
-Press `Ctrl+C` to detach — the session keeps running in the background.
-
-```bash
-tarvos attach my-feature
-```
-
----
-
 ### `tarvos forget <name> [--force]`
 
 Remove a session from Tarvos without deleting its git branch. Use `--force` to skip the confirmation prompt.
