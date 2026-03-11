@@ -22,6 +22,13 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$_TARVOS_SOURCE")" && pwd)"
 unset _TARVOS_SOURCE
 
+# ─── Portable bun resolution ─────────────────────────────────────────────────
+# Honour BUN_PATH env var, then fall back to PATH lookup, then last-resort path.
+_BUN_BIN="${BUN_PATH:-}"
+if [[ -z "$_BUN_BIN" ]]; then
+    _BUN_BIN="$(command -v bun 2>/dev/null || echo '/Users/rishugoyal/.bun/bin/bun')"
+fi
+
 # Capture the user's project root (where tarvos is invoked from).
 # Must be done before any cd.  Inherited by background workers via the
 # TARVOS_PROJECT_ROOT env var exported in the detach wrapper.
@@ -144,9 +151,10 @@ EOF
 
 usage_tui() {
     cat <<EOF
-Usage: tarvos tui
+Usage: tarvos tui [view <session-name>]
 
 Open the interactive session browser (also: run 'tarvos' with no arguments).
+  tarvos tui view <session>   Open directly to the RunDashboard for <session>
 
 Keys:
   ↑ / k    Move selection up
@@ -1053,9 +1061,20 @@ cmd_stop() {
 # tarvos tui — interactive session list TUI
 # ──────────────────────────────────────────────────────────────
 cmd_tui() {
+    local initial_session=""
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) usage_tui ;;
+            view)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    echo "tarvos tui view: missing session name" >&2
+                    usage_tui
+                fi
+                initial_session="$1"
+                shift
+                ;;
             *)
                 echo "tarvos tui: unexpected argument: $1" >&2
                 usage_tui
@@ -1063,7 +1082,11 @@ cmd_tui() {
         esac
     done
 
-    exec /Users/rishugoyal/.bun/bin/bun run "${SCRIPT_DIR}/tui/src/index.tsx"
+    if [[ -n "$initial_session" ]]; then
+        export TARVOS_TUI_INITIAL_SESSION="$initial_session"
+    fi
+
+    exec "$_BUN_BIN" run "${SCRIPT_DIR}/tui/src/index.tsx"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1713,7 +1736,7 @@ run_agent_loop() {
 main() {
     if [[ $# -eq 0 ]]; then
         # No arguments: launch the unified TUI session list
-        exec /Users/rishugoyal/.bun/bin/bun run "${SCRIPT_DIR}/tui/src/index.tsx"
+        exec "$_BUN_BIN" run "${SCRIPT_DIR}/tui/src/index.tsx"
     fi
 
     local cmd="$1"
