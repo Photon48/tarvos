@@ -429,14 +429,16 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
   })
 
   const sessionDir = getSessionDir(sessionName)
+  const [session, setSession] = useState<Session | null>(null)
 
   // Load initial session state
   const refreshSession = useCallback(async () => {
     try {
       const sessions = await loadSessions()
-      const session = sessions.find(s => s.name === sessionName)
-      if (session) {
-        dispatch({ type: "SESSION_LOADED", session })
+      const found = sessions.find(s => s.name === sessionName)
+      if (found) {
+        setSession(found)
+        dispatch({ type: "SESSION_LOADED", session: found })
       }
     } catch {}
   }, [sessionName])
@@ -461,12 +463,14 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
 
   // Watch events file for the current loop
   useEffect(() => {
+    const logDir = session?.log_dir ?? ""
+    if (!logDir) return  // log_dir not yet written (session hasn't started first loop)
     const loopNum = runState.currentLoop > 0 ? runState.currentLoop : 1
-    const cleanup = watchEventsFile(sessionDir, loopNum, (event) => {
+    const cleanup = watchEventsFile(logDir, loopNum, (event) => {
       dispatch({ type: "EVENT", event })
     })
     return cleanup
-  }, [sessionDir, runState.currentLoop])
+  }, [session?.log_dir, runState.currentLoop])
 
   // Elapsed time counter
   useEffect(() => {

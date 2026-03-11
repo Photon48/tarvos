@@ -9,6 +9,7 @@ export interface Session {
   branch: string
   original_branch: string
   worktree_path: string
+  log_dir: string  // path to current run's log dir, e.g. .tarvos/sessions/<n>/logs/run-<ts>
   created_at: string
   started_at: string | null
   last_activity: string

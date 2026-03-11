@@ -1,20 +1,20 @@
 # Progress Report
 
 ## Current Status
-Phase 0 of 3: Worktree Isolation (Critical Safety Fix)
+Phase 1 of 3: Events File Path Fix
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh (cmd_begin ~682): Replaced silent PROJECT_DIR fallback with hard abort (empty WORKTREE_PATH or missing dir)
-- tarvos.sh (cmd_continue ~844): Same hard abort fix applied for continue path
-- tarvos.sh (run_agent_loop ~1448): Added safety guard after `cd` to abort if running in main repo root
-- tarvos.sh (cmd_continue ~870): Fixed `detach_start` to pass `"continue"` as 4th arg (was defaulting to "begin")
-- tarvos.sh (cmd_begin ~719): Removed `tarvos attach` line from begin output
+- lib/session-manager.sh: Added `log_dir: ""` to session_init state.json; added `session_set_log_dir()` function
+- tarvos.sh (after init_logging ~1487): Added `session_set_log_dir "$session_name" "$LOG_DIR"` call
+- tui/src/types.ts: Added `log_dir: string` field to Session interface
+- tui/src/data/events.ts: Changed signature from `(sessionDir, loopNum)` to `(logDir, loopNum)`; constructs `loop-NNN-events.jsonl` with zero-padded loop number; watcher wrapped in try/catch to avoid ENOENT crash
+- tui/src/screens/RunDashboardScreen.tsx: Added `session` state; watchEventsFile now uses `session?.log_dir`; skips if logDir is empty
 
 ## Immediate Next Task
-Begin Phase 1: Fix events file path mismatch. Start by adding `log_dir` field to `lib/session-manager.sh` session init and adding `session_set_log_dir` function.
+Begin Phase 2: Fix TUI action correctness in SessionListScreen.tsx. Start by updating the ACTIONS map and fixing executeAction to use real tarvos subcommands.
 
 ## Key Files for Next Task
-- lib/session-manager.sh
-- tarvos.sh (run_agent_loop, after init_logging)
-- tui/src/data/events.ts
+- tui/src/screens/SessionListScreen.tsx
+- tui/src/commands.ts
+- tui/src/screens/RunDashboardScreen.tsx

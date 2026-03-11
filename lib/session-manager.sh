@@ -151,6 +151,7 @@ session_init() {
             "branch": "",
             "original_branch": "",
             "worktree_path": "",
+            "log_dir": "",
             "created_at": $created_at,
             "started_at": "",
             "last_activity": $last_activity,
@@ -383,5 +384,17 @@ session_mark_started() {
     local tmp
     tmp=$(mktemp)
     jq --arg now "$now" '.started_at = $now | .last_activity = $now' \
+        "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+}
+
+# Update log_dir in session state (called after init_logging sets LOG_DIR)
+# Args: $1 = name, $2 = log_dir (absolute path to current run's log directory)
+session_set_log_dir() {
+    local name="$1"
+    local log_dir="$2"
+    local state_file
+    state_file="$(session_state_file "$name")"
+    local tmp="${state_file}.tmp.$$"
+    jq --arg v "$log_dir" '.log_dir = $v | .last_activity = now | todate' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }

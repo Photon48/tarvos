@@ -3,11 +3,12 @@ import { watch } from "fs"
 import type { TuiEvent } from "../types"
 
 export function watchEventsFile(
-  sessionDir: string,
+  logDir: string,
   loopNum: number,
   onEvent: (event: TuiEvent) => void
 ): () => void {
-  const file = join(sessionDir, `events-${loopNum}.jsonl`)
+  const paddedLoop = String(loopNum).padStart(3, "0")
+  const file = join(logDir, `loop-${paddedLoop}-events.jsonl`)
   let offset = 0
 
   const drain = async () => {
@@ -21,7 +22,10 @@ export function watchEventsFile(
     } catch {}
   }
 
-  const watcher = watch(file, { persistent: false }, drain)
+  let watcher: ReturnType<typeof watch> | null = null
+  try {
+    watcher = watch(file, { persistent: false }, drain)
+  } catch {}
   drain() // Initial drain
-  return () => watcher.close()
+  return () => { try { watcher?.close() } catch {} }
 }

@@ -1485,6 +1485,11 @@ run_agent_loop() {
     fi
     init_logging "$log_base_dir"
 
+    # Persist log_dir into state.json so the TUI can find the correct events file
+    if [[ -n "$session_name" ]]; then
+        session_set_log_dir "$session_name" "$LOG_DIR"
+    fi
+
     # Signal traps
     trap 'shutdown 130' INT
     trap 'shutdown 143' TERM
