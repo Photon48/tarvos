@@ -22,11 +22,35 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$_TARVOS_SOURCE")" && pwd)"
 unset _TARVOS_SOURCE
 
-# ─── Portable bun resolution ─────────────────────────────────────────────────
-# Honour BUN_PATH env var, then fall back to PATH lookup, then last-resort path.
-_BUN_BIN="${BUN_PATH:-}"
-if [[ -z "$_BUN_BIN" ]]; then
-    _BUN_BIN="$(command -v bun 2>/dev/null || echo '/Users/rishugoyal/.bun/bin/bun')"
+# ─── Note for developers ─────────────────────────────────────────────────────
+# bun is NOT required at runtime. It is only needed to rebuild the TUI binary.
+# See tui/build.sh for development instructions.
+
+# ─── Bundled dependency resolution ───────────────────────────────────────────
+TARVOS_DATA_DIR="${TARVOS_DATA_DIR:-${HOME}/.local/share/tarvos}"
+
+# Resolve bundled jq — prefer bundled copy, fall back to system jq
+TARVOS_JQ="${TARVOS_JQ_PATH:-${TARVOS_DATA_DIR}/bin/jq}"
+if [[ ! -x "$TARVOS_JQ" ]]; then
+    TARVOS_JQ="$(command -v jq 2>/dev/null || true)"
+fi
+if [[ -z "$TARVOS_JQ" ]]; then
+    echo "Error: jq not found. Re-run the tarvos installer:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash" >&2
+    exit 1
+fi
+export TARVOS_JQ
+
+# Resolve TUI binary (priority: env var → installed → dev build)
+_TUI_BIN="${TUI_BIN_PATH:-}"
+if [[ -z "$_TUI_BIN" || ! -x "$_TUI_BIN" ]]; then
+    _TUI_BIN="${TARVOS_DATA_DIR}/bin/tui"
+fi
+if [[ ! -x "$_TUI_BIN" ]]; then
+    # Dev fallback: look for locally compiled binary
+    _OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    _ARCH="$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')"
+    _TUI_BIN="${SCRIPT_DIR}/tui/dist/tui-${_OS}-${_ARCH}"
 fi
 
 # Capture the user's project root (where tarvos is invoked from).
@@ -356,10 +380,6 @@ EOF
     # ────────────────────────────────────────────────────────────
 
     # Validate dependencies
-    if ! command -v jq &>/dev/null; then
-        echo "tarvos init: jq is required but not installed. Install with: brew install jq" >&2
-        exit 1
-    fi
     if ! command -v claude &>/dev/null; then
         echo "tarvos init: claude CLI is required but not found in PATH" >&2
         exit 1
@@ -525,10 +545,6 @@ cmd_begin() {
     fi
 
     # Validate dependencies
-    if ! command -v jq &>/dev/null; then
-        echo "tarvos begin: jq is required but not installed." >&2
-        exit 1
-    fi
     if ! command -v claude &>/dev/null; then
         echo "tarvos begin: claude CLI not found in PATH." >&2
         exit 1
@@ -810,10 +826,6 @@ cmd_continue() {
     fi
 
     # Validate dependencies
-    if ! command -v jq &>/dev/null; then
-        echo "tarvos continue: jq is required but not installed." >&2
-        exit 1
-    fi
     if ! command -v claude &>/dev/null; then
         echo "tarvos continue: claude CLI not found in PATH." >&2
         exit 1
@@ -1107,7 +1119,13 @@ cmd_tui() {
         export TARVOS_TUI_INITIAL_SESSION="$initial_session"
     fi
 
-    exec "$_BUN_BIN" run "${SCRIPT_DIR}/tui/src/index.tsx"
+    if [[ ! -x "$_TUI_BIN" ]]; then
+        echo "Error: TUI binary not found. Re-run the tarvos installer:" >&2
+        echo "  curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash" >&2
+        echo "Or for development: cd tui && bun run build:darwin-arm64" >&2
+        exit 1
+    fi
+    exec "$_TUI_BIN"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1488,11 +1506,7 @@ cmd_migrate() {
     echo -e "  ${BOLD}Max loops:${RESET}      ${max_loops}"
     echo ""
 
-    # Validate jq is available
-    if ! command -v jq &>/dev/null; then
-        echo "tarvos migrate: jq is required but not installed. Install with: brew install jq" >&2
-        exit 1
-    fi
+
 
     mkdir -p "$TARVOS_DIR"
 
@@ -1898,7 +1912,13 @@ run_agent_loop() {
 main() {
     if [[ $# -eq 0 ]]; then
         # No arguments: launch the unified TUI session list
-        exec "$_BUN_BIN" run "${SCRIPT_DIR}/tui/src/index.tsx"
+        if [[ ! -x "$_TUI_BIN" ]]; then
+            echo "Error: TUI binary not found. Re-run the tarvos installer:" >&2
+            echo "  curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash" >&2
+            echo "Or for development: cd tui && bun run build:darwin-arm64" >&2
+            exit 1
+        fi
+        exec "$_TUI_BIN"
     fi
 
     local cmd="$1"

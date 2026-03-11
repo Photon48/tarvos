@@ -1,19 +1,22 @@
 # Progress Report
 
 ## Current Status
-Phase 3 of 7: New curl-based install script
+Phase 4 of 7: Update tarvos.sh
 Status: COMPLETED
 
 ## What Was Done This Session
-- install.sh: Rewrote as standalone curl-piped installer (platform detection, downloads jq + TUI binary + tarball, symlinks, skill install)
-- .github/workflows/release.yml: Added tarball build step that packages tarvos.sh + lib/ + tarvos-skill/ as tarvos-$VERSION.tar.gz and uploads it as a release asset
+- tarvos.sh: Replaced bun resolution block with dev comment
+- tarvos.sh: Added bundled dependency resolution block (TARVOS_JQ + _TUI_BIN with priority fallbacks)
+- tarvos.sh: Updated both TUI invocations (cmd_tui + main) to use `exec "$_TUI_BIN"` with error guard
+- tarvos.sh: Removed `command -v jq` prerequisite guards from cmd_init, cmd_begin, cmd_continue, cmd_migrate
 
 ## Immediate Next Task
-Begin Phase 4: Update tarvos.sh — (4a) replace bun resolution block with dev comment, (4b) add jq+TUI binary resolution block, (4c) update TUI invocations, (4d) remove jq prerequisite guards.
+Begin Phase 5: Replace every bare `jq` call in lib/session-manager.sh and lib/context-monitor.sh with `"$TARVOS_JQ"`. Mechanical find-and-replace across ~48 call sites. Also update the 6 real jq calls in tests/smoke-test.sh to use `${TARVOS_JQ:-jq}`.
 
 ## Key Files for Next Task
-- tarvos.sh (multiple edits: lines ~25-30 for bun block, add resolution block after, update TUI invocations at ~1089 and ~1761, remove jq guards in cmd_init/begin/continue/migrate)
+- lib/session-manager.sh
+- lib/context-monitor.sh
+- tests/smoke-test.sh
 
 ## Gotchas
-- tarvos.sh uses `exec "$_TUI_BIN"` pattern — both TUI call sites need the guard + exec replacement
-- jq guards use `command -v jq` — search for these in cmd_init, cmd_begin, cmd_continue, cmd_migrate
+- Mock stubs in smoke-test.sh replace the binary — those are fine as-is; only the real jq calls need updating
