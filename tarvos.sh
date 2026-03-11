@@ -1014,10 +1014,7 @@ cmd_tui() {
         esac
     done
 
-    source "${SCRIPT_DIR}/lib/session-manager.sh"
-    source "${SCRIPT_DIR}/lib/tui-app.sh"
-
-    tui_app_run "${SCRIPT_DIR}/tarvos.sh"
+    exec /Users/rishugoyal/.bun/bin/bun run "${SCRIPT_DIR}/tui/src/index.tsx"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1655,10 +1652,7 @@ run_agent_loop() {
 main() {
     if [[ $# -eq 0 ]]; then
         # No arguments: launch the unified TUI session list
-        source "${SCRIPT_DIR}/lib/session-manager.sh"
-        source "${SCRIPT_DIR}/lib/tui-app.sh"
-        tui_app_run "${SCRIPT_DIR}/tarvos.sh"
-        exit $?
+        exec /Users/rishugoyal/.bun/bin/bun run "${SCRIPT_DIR}/tui/src/index.tsx"
     fi
 
     local cmd="$1"
