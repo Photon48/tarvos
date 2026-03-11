@@ -53,6 +53,11 @@ trap '_cleanup_tmpdir' EXIT
 _TEST_NUM=0
 _TEST_NAME=""
 
+# Default per-test timeout in seconds (override with TEST_TIMEOUT env var)
+TEST_TIMEOUT="${TEST_TIMEOUT:-30}"
+
+# _run_test_with_timeout: run a test function with a hard wall-clock timeout.
+# Uses a background subshell + kill to enforce the limit.
 _run_test() {
     local num="$1"
     local name="$2"
@@ -62,7 +67,32 @@ _run_test() {
 
     local result=0
     local output=""
-    output=$("$@" 2>&1) || result=$?
+    local tmpout
+    tmpout=$(mktemp)
+
+    # Run the test in a background subshell; kill it if it exceeds TEST_TIMEOUT.
+    ( "$@" > "$tmpout" 2>&1 ) &
+    local test_pid=$!
+
+    # Watchdog: sleep then kill the test process group if still running.
+    ( sleep "$TEST_TIMEOUT" && kill -TERM "$test_pid" 2>/dev/null && sleep 1 && kill -KILL "$test_pid" 2>/dev/null ) &
+    local watchdog_pid=$!
+
+    wait "$test_pid" 2>/dev/null
+    result=$?
+    # Kill the watchdog now that the test finished (suppress "Terminated" noise).
+    kill "$watchdog_pid" 2>/dev/null
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    output=$(cat "$tmpout" 2>/dev/null || true)
+    rm -f "$tmpout"
+
+    # A non-zero exit from SIGTERM/SIGKILL means timeout.
+    if [[ "$result" -eq 143 ]] || [[ "$result" -eq 137 ]]; then
+        output="TIMED OUT after ${TEST_TIMEOUT}s${output:+
+$output}"
+        result=1
+    fi
 
     local padded_name
     padded_name=$(printf '%-42s' "$name")
@@ -632,8 +662,9 @@ _test_worktree_isolation() {
     _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
 
     # Start the session in background — mock claude just sleeps
+    # --detach forces detach mode even when stdin is not a tty (e.g. inside $(...))
     local output exit_code=0
-    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin --detach "$sname" 2>&1) || exit_code=$?
 
     [[ "$exit_code" -eq 0 ]] || { echo "begin should exit 0; got ${exit_code}: $output"; return 1; }
 
@@ -650,9 +681,10 @@ _test_worktree_isolation() {
     branches=$(git -C "$workdir" branch 2>/dev/null || echo "")
     echo "$branches" | grep -q "tarvos/${sname}" || { echo "Branch tarvos/${sname}-* not found in: $branches"; return 1; }
 
-    # Assert: main repo git status shows zero modified files (excluding .tarvos/)
+    # Assert: main repo git status shows zero modified/staged files (excluding untracked)
+    # Untracked files (like user PRDs) are expected; only track staged/modified files.
     local dirty_files
-    dirty_files=$(git -C "$workdir" status --porcelain 2>/dev/null | grep -v "^?? \.tarvos/" | grep -v "^?? \.gitignore" || true)
+    dirty_files=$(git -C "$workdir" status --porcelain 2>/dev/null | grep -v "^??" || true)
     [[ -z "$dirty_files" ]] || { echo "Main repo has unexpected dirty files: $dirty_files"; return 1; }
 
     # Stop the background session
@@ -670,9 +702,9 @@ _test_continue_resumes_session() {
 
     _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
 
-    # Start the session
+    # Start the session (--detach forces background even inside $(...))
     local output exit_code=0
-    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin --detach "$sname" 2>&1) || exit_code=$?
     [[ "$exit_code" -eq 0 ]] || { echo "begin failed: $output"; return 1; }
 
     # Wait for status to become "running" (up to 10s)
@@ -702,8 +734,8 @@ _test_continue_resumes_session() {
     done
     [[ "$status" == "stopped" ]] || { echo "Session should be stopped after stop, got: $status"; return 1; }
 
-    # Resume with continue
-    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" continue "$sname" 2>&1) || exit_code=$?
+    # Resume with continue (--detach forces background even inside $(...))
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" continue --detach "$sname" 2>&1) || exit_code=$?
 
     # Wait for status to become "running" again (up to 10s)
     attempts=0
@@ -734,9 +766,9 @@ _test_log_dir_in_state() {
 
     _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
 
-    # Start the session
+    # Start the session (--detach forces background even inside $(...))
     local output exit_code=0
-    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin --detach "$sname" 2>&1) || exit_code=$?
     [[ "$exit_code" -eq 0 ]] || { echo "begin failed: $output"; return 1; }
 
     # Poll state.json for log_dir up to 15s
@@ -762,16 +794,16 @@ _test_log_dir_in_state() {
 # Test 19: no "attach" text in tarvos begin output
 _test_no_attach_in_begin_output() {
     local workdir="${TMPDIR_ROOT}/t19"
-    local sname="test-noattach-t19"
+    local sname="test-begin-output-t19"
 
     local mock_bin="${TMPDIR_ROOT}/mock-t19"
     _make_mock_bin "$mock_bin" 5
 
     _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
 
-    # Capture begin output
+    # Capture begin output (--detach forces background even inside $(...))
     local output exit_code=0
-    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin --detach "$sname" 2>&1) || exit_code=$?
     [[ "$exit_code" -eq 0 ]] || { echo "begin should succeed; got ${exit_code}: $output"; return 1; }
 
     # Assert: output does NOT contain "attach" (case-insensitive)

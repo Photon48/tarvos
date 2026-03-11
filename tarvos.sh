@@ -22,6 +22,14 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$_TARVOS_SOURCE")" && pwd)"
 unset _TARVOS_SOURCE
 
+# Capture the user's project root (where tarvos is invoked from).
+# Must be done before any cd.  Inherited by background workers via the
+# TARVOS_PROJECT_ROOT env var exported in the detach wrapper.
+if [[ -z "${TARVOS_PROJECT_ROOT:-}" ]]; then
+    TARVOS_PROJECT_ROOT="$(pwd)"
+fi
+export TARVOS_PROJECT_ROOT
+
 # Clear Claude Code env vars so child claude instances don't think they're nested sessions.
 # Tarvos spawns independent Claude agents, not nested sessions.
 unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT 2>/dev/null || true
@@ -458,10 +466,15 @@ _tarvos_reinit_session() {
 cmd_begin() {
     local session_name=""
     local continue_mode=0
+    local force_detach=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) usage_begin ;;
+            --detach)
+                force_detach=1
+                shift
+                ;;
             -*)
                 echo "tarvos begin: unknown option: $1" >&2
                 usage_begin
@@ -700,9 +713,10 @@ cmd_begin() {
     PROJECT_DIR="$WORKTREE_PATH"
 
     # ── Detached (background) mode ──────────────────────────────
-    # If we're already in a non-interactive/background context (stdin not a tty),
-    # run the agent loop directly in this process (we ARE the background worker).
-    if [[ ! -t 0 ]]; then
+    # Two cases for running the agent loop inline (we ARE the background worker):
+    #   1. stdin is not a tty AND --detach was NOT passed (normal nohup wrapper invocation)
+    # Otherwise, always detach to background.
+    if [[ ! -t 0 ]] && [[ "$force_detach" -eq 0 ]]; then
         # Source library modules
         source "${SCRIPT_DIR}/lib/agent-logger.sh"
         source "${SCRIPT_DIR}/lib/prompt-builder.sh"
@@ -719,7 +733,7 @@ cmd_begin() {
         CURRENT_SESSION_NAME="$session_name"
         run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE" "$session_name"
     else
-        # Interactive foreground call: mark running and launch detached background process
+        # Interactive foreground call (or --detach flag): launch detached background process
         session_set_status "$session_name" "running"
         session_mark_started "$session_name"
 
@@ -737,10 +751,15 @@ cmd_begin() {
 # ──────────────────────────────────────────────────────────────
 cmd_continue() {
     local session_name=""
+    local force_detach=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) usage_continue ;;
+            --detach)
+                force_detach=1
+                shift
+                ;;
             -*)
                 echo "tarvos continue: unknown option: $1" >&2
                 usage_continue
@@ -817,9 +836,15 @@ cmd_continue() {
         exit 1
     fi
 
-    # Ensure git working directory is clean before touching branches
-    if ! branch_ensure_clean; then
-        exit 1
+    # Only check for a clean working directory when running interactively from the
+    # main repo root.  Background workers cd into a worktree before exec'ing this
+    # command, so the worktree may have in-progress agent changes — that's expected.
+    local _is_background=0
+    [[ ! -t 0 ]] && [[ "$force_detach" -eq 0 ]] && _is_background=1
+    if [[ "$_is_background" -eq 0 ]]; then
+        if ! branch_ensure_clean; then
+            exit 1
+        fi
     fi
 
     local WORKTREE_PATH=""
@@ -828,11 +853,29 @@ cmd_continue() {
     if worktree_exists "$session_name"; then
         WORKTREE_PATH="$SESSION_WORKTREE_PATH"
         if [[ -z "$WORKTREE_PATH" ]]; then
-            WORKTREE_PATH="$(pwd)/$(worktree_path "${session_name}")"
+            WORKTREE_PATH="${TARVOS_PROJECT_ROOT:-$(pwd)}/.tarvos/worktrees/${session_name}"
         fi
         echo "tarvos: resuming worktree at '$(worktree_path "${session_name}")'"
+    elif [[ -n "$SESSION_WORKTREE_PATH" ]]; then
+        # Worktree .git file is gone but state.json records a path — could be
+        # manually deleted or a branch+worktree that needs recreation.
+        if [[ -n "$SESSION_BRANCH" ]]; then
+            # Branch still exists — recreate the worktree
+            local abs_wt_path
+            if ! abs_wt_path=$(worktree_create "$session_name" "$SESSION_BRANCH"); then
+                echo "tarvos: failed to recreate worktree for session '${session_name}'." >&2
+                exit 1
+            fi
+            echo "tarvos: recreated worktree at '$(worktree_path "${session_name}")'"
+            session_set_worktree_path "$session_name" "$abs_wt_path"
+            WORKTREE_PATH="$abs_wt_path"
+            session_load "$session_name"
+        else
+            # No branch — let the directory check below produce the right error
+            WORKTREE_PATH="$SESSION_WORKTREE_PATH"
+        fi
     elif [[ -n "$SESSION_BRANCH" ]]; then
-        # Worktree was removed but branch still exists — recreate it
+        # No worktree path recorded, but branch exists — recreate from branch
         local abs_wt_path
         if ! abs_wt_path=$(worktree_create "$session_name" "$SESSION_BRANCH"); then
             echo "tarvos: failed to recreate worktree for session '${session_name}'." >&2
@@ -864,6 +907,29 @@ cmd_continue() {
     fi
     PROJECT_DIR="$WORKTREE_PATH"
 
+    local TOKEN_LIMIT="$SESSION_TOKEN_LIMIT"
+    local MAX_LOOPS="$SESSION_MAX_LOOPS"
+
+    # ── Background worker path ──────────────────────────────────
+    # When stdin is not a tty AND --detach was NOT passed, we ARE the background
+    # worker (launched by detach_start via nohup). Run the agent loop in-process.
+    if [[ ! -t 0 ]] && [[ "$force_detach" -eq 0 ]]; then
+        source "${SCRIPT_DIR}/lib/agent-logger.sh"
+        source "${SCRIPT_DIR}/lib/prompt-builder.sh"
+        source "${SCRIPT_DIR}/lib/signal-detector.sh"
+        source "${SCRIPT_DIR}/lib/context-monitor.sh"
+        source "${SCRIPT_DIR}/lib/summary-generator.sh"
+
+        session_set_status "$session_name" "running"
+        session_mark_started "$session_name"
+
+        CONTINUE_MODE=1
+        CURRENT_SESSION_NAME="$session_name"
+        run_agent_loop "$PRD_FILE" "$PROTOCOL_FILE" "$PROJECT_DIR" "$TOKEN_LIMIT" "$MAX_LOOPS" "$CONTINUE_MODE" "$session_name"
+        return
+    fi
+
+    # ── Foreground path (or --detach flag) ──────────────────────
     # Check that the session isn't already running in background
     if detach_is_running "$session_name"; then
         local existing_pid
@@ -872,8 +938,6 @@ cmd_continue() {
         exit 1
     fi
 
-    # Always run detached — background tarvos begin will handle status transition
-    # and pick up continue_mode=1 automatically (stopped sessions always resume)
     detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR" "continue"
     echo ""
     echo "View progress in the TUI:"
@@ -1460,10 +1524,12 @@ run_agent_loop() {
     fi
 
     # Determine the progress.md location:
-    # If a session is active, use session-local progress.md; otherwise fall back to project root
+    # If a session is active, use session-local progress.md; otherwise fall back to project root.
+    # Use SESSIONS_DIR (which is absolute when TARVOS_PROJECT_ROOT is set) so this works even
+    # after cd into a worktree.
     local PROGRESS_FILE
-    if [[ -n "$session_name" ]] && [[ -d ".tarvos/sessions/${session_name}" ]]; then
-        PROGRESS_FILE=".tarvos/sessions/${session_name}/progress.md"
+    if [[ -n "$session_name" ]] && [[ -d "${SESSIONS_DIR}/${session_name}" ]]; then
+        PROGRESS_FILE="${SESSIONS_DIR}/${session_name}/progress.md"
     else
         PROGRESS_FILE="${PROJECT_DIR}/progress.md"
     fi
@@ -1481,10 +1547,11 @@ run_agent_loop() {
         fi
     fi
 
-    # Initialize logging: use session logs folder if session is active
+    # Initialize logging: use session logs folder if session is active.
+    # Use SESSIONS_DIR (absolute) to avoid relative-path issues after cd into worktree.
     local log_base_dir
-    if [[ -n "$session_name" ]] && [[ -d ".tarvos/sessions/${session_name}" ]]; then
-        log_base_dir=".tarvos/sessions/${session_name}"
+    if [[ -n "$session_name" ]] && [[ -d "${SESSIONS_DIR}/${session_name}" ]]; then
+        log_base_dir="${SESSIONS_DIR}/${session_name}"
     else
         log_base_dir="$PROJECT_DIR"
     fi

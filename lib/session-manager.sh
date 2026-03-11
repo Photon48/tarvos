@@ -4,9 +4,17 @@
 # ──────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────
-SESSIONS_DIR=".tarvos/sessions"
-REGISTRY_FILE=".tarvos/sessions.json"
-ARCHIVE_DIR=".tarvos/archive"
+# Use absolute project root if available (set by tarvos.sh before any cd).
+# This allows background workers that cd into a worktree to still find sessions.
+if [[ -n "${TARVOS_PROJECT_ROOT:-}" ]]; then
+    SESSIONS_DIR="${TARVOS_PROJECT_ROOT}/.tarvos/sessions"
+    REGISTRY_FILE="${TARVOS_PROJECT_ROOT}/.tarvos/sessions.json"
+    ARCHIVE_DIR="${TARVOS_PROJECT_ROOT}/.tarvos/archive"
+else
+    SESSIONS_DIR=".tarvos/sessions"
+    REGISTRY_FILE=".tarvos/sessions.json"
+    ARCHIVE_DIR=".tarvos/archive"
+fi
 
 # Globals loaded by session_load()
 SESSION_NAME=""
@@ -394,7 +402,9 @@ session_set_log_dir() {
     local log_dir="$2"
     local state_file
     state_file="$(session_state_file "$name")"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     local tmp="${state_file}.tmp.$$"
-    jq --arg v "$log_dir" '.log_dir = $v | .last_activity = now | todate' \
+    jq --arg v "$log_dir" --arg now "$now" '.log_dir = $v | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }

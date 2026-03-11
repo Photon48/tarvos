@@ -2,21 +2,16 @@
 
 ## Current Status
 Phase 3 of 3: Smoke Tests
-Status: IN_PROGRESS
+Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Added `error()` utility function (was missing, caused "command not found")
-- lib/detach-manager.sh: Removed "Attach: tarvos attach" line; propagate PATH in wrapper script
-- tarvos.sh: Removed "tarvos attach" mention from cmd_continue output
-- tests/smoke-test.sh: TOTAL_TESTS=19; added _init_session_in_tmpdir, _make_mock_bin helpers; tests 14-19 added; tests 1-14 all pass
+- tests/smoke-test.sh: Added per-test timeout watchdog (TEST_TIMEOUT env var, default 30s)
+- tarvos.sh: Added `--detach` flag to `cmd_begin` and `cmd_continue`; added `TARVOS_PROJECT_ROOT` export
+- tarvos.sh: `run_agent_loop` uses `SESSIONS_DIR` (absolute) for progress.md and log_base_dir
+- tarvos.sh: `cmd_continue` background path skips `branch_ensure_clean` (worktree may have agent changes)
+- lib/worktree-manager.sh: All functions use `_worktree_base()` (TARVOS_PROJECT_ROOT-aware); `git` calls use `-C base`
+- lib/session-manager.sh: Paths use `TARVOS_PROJECT_ROOT` when set; fixed `session_set_log_dir` jq date bug
+- tests/smoke-test.sh: Tests 16-19 use `--detach`; test 19 session name fixed; test 16 dirty check fixed
 
-## Immediate Next Task
-Fix the 5 remaining failing tests (15-19):
-
-1. **Tests 16-19** — worktree path mangled: `git worktree add` prints "HEAD is now at..." to stdout which gets captured into the path variable. Fix: in `lib/worktree-manager.sh` `worktree_create`, change `git worktree add "$wt_path" "$branch_name" 2>/dev/null` to `git worktree add "$wt_path" "$branch_name" &>/dev/null` so stdout is also suppressed.
-
-2. **Test 15** — wrong code path triggered: need to set `worktree_exists=true` (create a fake `.git` file at `.tarvos/worktrees/<session>/.git`) AND set `SESSION_WORKTREE_PATH` to a nonexistent absolute path in state.json, so `cmd_continue` sets `WORKTREE_PATH=<nonexistent>` and hits the "does not exist" abort.
-
-## Key Files for Next Task
-- lib/worktree-manager.sh (fix git stdout leak — line ~54)
-- tests/smoke-test.sh (_test_missing_worktree_aborts around line 607)
+## All 19 smoke tests pass
+Run with: `TEST_TIMEOUT=45 bash tests/smoke-test.sh`
