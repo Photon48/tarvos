@@ -27,7 +27,7 @@ _BOLD="\033[1m"
 # ──────────────────────────────────────────────────────────────
 # Test counters
 # ──────────────────────────────────────────────────────────────
-TOTAL_TESTS=13
+TOTAL_TESTS=19
 PASSED=0
 FAILED=0
 declare -a FAILED_TESTS=()
@@ -525,6 +525,269 @@ EOF
 }
 
 # ──────────────────────────────────────────────────────────────
+# Helper: create a temp git repo and run tarvos init
+# Args: $1 = workdir, $2 = session_name, $3 = mock_bin (optional)
+# Stores an ABSOLUTE prd path so bg workers can find it after cd.
+# ──────────────────────────────────────────────────────────────
+_init_session_in_tmpdir() {
+    local workdir="$1"
+    local session_name="$2"
+    local mock_bin="${3:-}"
+
+    _make_git_repo "$workdir"
+
+    # Write a minimal PRD file — use absolute path so background workers find it
+    local prd_abs="${workdir}/test.prd.md"
+    echo "# Test PRD" > "$prd_abs"
+
+    # Run init (with PATH including mock_bin if provided)
+    local output exit_code=0
+    if [[ -n "$mock_bin" ]]; then
+        output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" init "$prd_abs" --name "$session_name" --no-preview 2>&1) || exit_code=$?
+    else
+        output=$(cd "$workdir" && bash "${PROJECT_ROOT}/tarvos.sh" init "$prd_abs" --name "$session_name" --no-preview 2>&1) || exit_code=$?
+    fi
+
+    [[ "$exit_code" -eq 0 ]] || { echo "tarvos init failed (exit ${exit_code}): $output"; return 1; }
+    [[ -f "${workdir}/.tarvos/sessions/${session_name}/state.json" ]] || { echo "state.json not created after init"; return 1; }
+    return 0
+}
+
+# Helper: build a mock_bin dir with a mock claude (sleep loop)
+# Real jq is used from PATH; only claude is mocked.
+# Args: $1 = mock_bin dir to create, $2 = claude_sleep_seconds (default: 30)
+_make_mock_bin() {
+    local mock_bin="$1"
+    local claude_sleep="${2:-30}"
+
+    mkdir -p "$mock_bin"
+
+    # mock claude — just sleeps so the agent loop is "running" but never completes
+    cat > "${mock_bin}/claude" <<MOCKEOF
+#!/usr/bin/env bash
+# Mock claude — sleeps to simulate a long-running agent
+sleep ${claude_sleep}
+MOCKEOF
+    chmod +x "${mock_bin}/claude"
+}
+
+# Test 14: reject --force works non-interactively (no stdin prompt)
+_test_reject_force_noninteractive() {
+    local workdir="${TMPDIR_ROOT}/t14"
+    local sname="test-reject-t14"
+
+    # No mock_bin needed for init+reject — claude not invoked
+    _init_session_in_tmpdir "$workdir" "$sname" || return 1
+
+    # reject --force should exit 0 without any stdin interaction
+    local output exit_code=0
+    output=$(cd "$workdir" && bash "${PROJECT_ROOT}/tarvos.sh" reject --force "$sname" 2>&1 </dev/null) || exit_code=$?
+
+    [[ "$exit_code" -eq 0 ]] || { echo "reject --force should exit 0; got ${exit_code}: $output"; return 1; }
+
+    # Session directory should be gone
+    [[ ! -d "${workdir}/.tarvos/sessions/${sname}" ]] || {
+        echo "Session dir should be removed after reject --force"
+        return 1
+    }
+    return 0
+}
+
+# Test 15: missing worktree aborts — no silent fallback to main repo
+_test_missing_worktree_aborts() {
+    local workdir="${TMPDIR_ROOT}/t15"
+    local sname="test-missing-wt-t15"
+
+    # No mock_bin needed — init only, claude not invoked for continue
+    _init_session_in_tmpdir "$workdir" "$sname" || return 1
+
+    # Manually set state to "stopped" with a nonexistent worktree_path
+    local state_file="${workdir}/.tarvos/sessions/${sname}/state.json"
+    local nonexistent_path="/tmp/nonexistent-tarvos-wt-$$"
+    local tmp="${state_file}.tmp"
+    jq --arg v "$nonexistent_path" '.status = "stopped" | .worktree_path = $v' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+
+    # tarvos continue should fail with "does not exist"
+    local combined exit_code=0
+    combined=$(cd "$workdir" && bash "${PROJECT_ROOT}/tarvos.sh" continue "$sname" 2>&1 </dev/null) || exit_code=$?
+
+    [[ "$exit_code" -ne 0 ]] || { echo "continue on missing worktree should exit non-zero; got 0: $combined"; return 1; }
+    echo "$combined" | grep -qi "does not exist" || { echo "Should mention 'does not exist': $combined"; return 1; }
+
+    # Session status must still be "stopped" — not changed to "running"
+    local status
+    status=$(jq -r '.status' "$state_file" 2>/dev/null || echo "")
+    [[ "$status" == "stopped" ]] || { echo "Session status should remain 'stopped', got: $status"; return 1; }
+    return 0
+}
+
+# Test 16: worktree isolation — agent runs in worktree, not main repo
+_test_worktree_isolation() {
+    local workdir="${TMPDIR_ROOT}/t16"
+    local sname="test-isolation-t16"
+
+    local mock_bin="${TMPDIR_ROOT}/mock-t16"
+    _make_mock_bin "$mock_bin" 30
+
+    _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
+
+    # Start the session in background — mock claude just sleeps
+    local output exit_code=0
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+
+    [[ "$exit_code" -eq 0 ]] || { echo "begin should exit 0; got ${exit_code}: $output"; return 1; }
+
+    # Give detach time to start the background process
+    sleep 1
+
+    # Assert: worktree dir exists
+    local wt_path
+    wt_path="${workdir}/.tarvos/worktrees/${sname}"
+    [[ -d "$wt_path" ]] || { echo "Worktree dir should exist at ${wt_path}"; return 1; }
+
+    # Assert: a tarvos/* branch was created in the repo
+    local branches
+    branches=$(git -C "$workdir" branch 2>/dev/null || echo "")
+    echo "$branches" | grep -q "tarvos/${sname}" || { echo "Branch tarvos/${sname}-* not found in: $branches"; return 1; }
+
+    # Assert: main repo git status shows zero modified files (excluding .tarvos/)
+    local dirty_files
+    dirty_files=$(git -C "$workdir" status --porcelain 2>/dev/null | grep -v "^?? \.tarvos/" | grep -v "^?? \.gitignore" || true)
+    [[ -z "$dirty_files" ]] || { echo "Main repo has unexpected dirty files: $dirty_files"; return 1; }
+
+    # Stop the background session
+    cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" stop "$sname" 2>/dev/null || true
+    return 0
+}
+
+# Test 17: continue resumes a stopped session (PID updated)
+_test_continue_resumes_session() {
+    local workdir="${TMPDIR_ROOT}/t17"
+    local sname="test-continue-t17"
+
+    local mock_bin="${TMPDIR_ROOT}/mock-t17"
+    _make_mock_bin "$mock_bin" 30
+
+    _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
+
+    # Start the session
+    local output exit_code=0
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    [[ "$exit_code" -eq 0 ]] || { echo "begin failed: $output"; return 1; }
+
+    # Wait for status to become "running" (up to 10s)
+    local attempts=0
+    local status=""
+    while [[ $attempts -lt 20 ]]; do
+        status=$(jq -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        [[ "$status" == "running" ]] && break
+        sleep 0.5
+        (( attempts++ ))
+    done
+    [[ "$status" == "running" ]] || { echo "Session should be running after begin, got: $status"; return 1; }
+
+    local first_pid
+    first_pid=$(cat "${workdir}/.tarvos/sessions/${sname}/pid" 2>/dev/null || echo "")
+
+    # Stop the session
+    cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" stop "$sname" >/dev/null 2>&1 || true
+
+    # Wait for status to become "stopped" (up to 5s)
+    attempts=0
+    while [[ $attempts -lt 10 ]]; do
+        status=$(jq -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        [[ "$status" == "stopped" ]] && break
+        sleep 0.5
+        (( attempts++ ))
+    done
+    [[ "$status" == "stopped" ]] || { echo "Session should be stopped after stop, got: $status"; return 1; }
+
+    # Resume with continue
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" continue "$sname" 2>&1) || exit_code=$?
+
+    # Wait for status to become "running" again (up to 10s)
+    attempts=0
+    while [[ $attempts -lt 20 ]]; do
+        status=$(jq -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        [[ "$status" == "running" ]] && break
+        sleep 0.5
+        (( attempts++ ))
+    done
+    [[ "$status" == "running" ]] || { echo "Session should be running after continue, got: $status"; return 1; }
+
+    local second_pid
+    second_pid=$(cat "${workdir}/.tarvos/sessions/${sname}/pid" 2>/dev/null || echo "")
+    [[ -n "$second_pid" ]] || { echo "PID file should exist after continue"; return 1; }
+
+    # Cleanup
+    cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" stop "$sname" >/dev/null 2>&1 || true
+    return 0
+}
+
+# Test 18: log_dir written to state.json after session starts
+_test_log_dir_in_state() {
+    local workdir="${TMPDIR_ROOT}/t18"
+    local sname="test-logdir-t18"
+
+    local mock_bin="${TMPDIR_ROOT}/mock-t18"
+    _make_mock_bin "$mock_bin" 30
+
+    _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
+
+    # Start the session
+    local output exit_code=0
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    [[ "$exit_code" -eq 0 ]] || { echo "begin failed: $output"; return 1; }
+
+    # Poll state.json for log_dir up to 15s
+    local log_dir=""
+    local attempts=0
+    while [[ $attempts -lt 30 ]]; do
+        log_dir=$(jq -r '.log_dir // ""' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        [[ -n "$log_dir" ]] && break
+        sleep 0.5
+        (( attempts++ ))
+    done
+
+    [[ -n "$log_dir" ]] || { echo "log_dir should be non-empty in state.json after begin"; return 1; }
+
+    # Assert: the directory at log_dir exists
+    [[ -d "$log_dir" ]] || { echo "log_dir directory should exist on disk: ${log_dir}"; return 1; }
+
+    # Cleanup
+    cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" stop "$sname" >/dev/null 2>&1 || true
+    return 0
+}
+
+# Test 19: no "attach" text in tarvos begin output
+_test_no_attach_in_begin_output() {
+    local workdir="${TMPDIR_ROOT}/t19"
+    local sname="test-noattach-t19"
+
+    local mock_bin="${TMPDIR_ROOT}/mock-t19"
+    _make_mock_bin "$mock_bin" 5
+
+    _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
+
+    # Capture begin output
+    local output exit_code=0
+    output=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" begin "$sname" 2>&1) || exit_code=$?
+    [[ "$exit_code" -eq 0 ]] || { echo "begin should succeed; got ${exit_code}: $output"; return 1; }
+
+    # Assert: output does NOT contain "attach" (case-insensitive)
+    if echo "$output" | grep -qi "attach"; then
+        echo "begin output should NOT contain 'attach': $output"
+        # Cleanup
+        cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" stop "$sname" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    # Cleanup
+    cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" stop "$sname" >/dev/null 2>&1 || true
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────
 # Main — run all tests
 # ──────────────────────────────────────────────────────────────
 main() {
@@ -546,6 +809,12 @@ main() {
     _run_test 11 "Git validation — no repo"               _test_git_validation_no_repo
     _run_test 12 "Git validation — missing .gitignore"    _test_git_validation_no_gitignore
     _run_test 13 "Existing .gitignore updated"            _test_git_validation_existing_gitignore
+    _run_test 14 "reject --force non-interactive"         _test_reject_force_noninteractive
+    _run_test 15 "Missing worktree aborts"                _test_missing_worktree_aborts
+    _run_test 16 "Worktree isolation"                     _test_worktree_isolation
+    _run_test 17 "Continue resumes stopped session"       _test_continue_resumes_session
+    _run_test 18 "log_dir written to state.json"          _test_log_dir_in_state
+    _run_test 19 "No 'attach' in begin output"            _test_no_attach_in_begin_output
 
     printf "\n"
     if [[ "$FAILED" -eq 0 ]]; then

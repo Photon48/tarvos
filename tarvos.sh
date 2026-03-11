@@ -46,6 +46,13 @@ CURRENT_SESSION_NAME=""
 # ──────────────────────────────────────────────────────────────
 # Usage helpers
 # ──────────────────────────────────────────────────────────────
+# Utility: print an error message to stderr
+# ──────────────────────────────────────────────────────────────
+error() {
+    echo "error: $*" >&2
+}
+
+# ──────────────────────────────────────────────────────────────
 usage_init() {
     cat <<EOF
 Usage: tarvos init <plan.md> --name <session-name> [options]
@@ -872,8 +879,6 @@ cmd_continue() {
     echo "View progress in the TUI:"
     echo "  tarvos tui"
     echo ""
-    echo "Or tail the raw log:"
-    echo "  tarvos attach ${session_name}"
     exit 0
 }
 
