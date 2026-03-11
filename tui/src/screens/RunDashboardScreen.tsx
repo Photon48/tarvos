@@ -576,9 +576,27 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     }
   }, [session?.log_dir, sessionName])
 
-  // Elapsed time counter
+  // Elapsed time counter — initialized from session.started_at so it doesn't reset on re-mount
   useEffect(() => {
-    startTimeRef.current = Date.now()
+    if (!session?.started_at) return
+
+    const origin = new Date(session.started_at).getTime()
+    startTimeRef.current = origin  // never resets on re-mount
+
+    // If session is done and we have both started_at and last_activity, show static final elapsed
+    if (session.status === "done" && session.last_activity) {
+      const endTime = new Date(session.last_activity).getTime()
+      const totalSecs = Math.floor((endTime - origin) / 1000)
+      if (totalSecs >= 3600) {
+        setElapsed(`${Math.floor(totalSecs / 3600)}h ${Math.floor((totalSecs % 3600) / 60)}m total`)
+      } else if (totalSecs >= 60) {
+        setElapsed(`${Math.floor(totalSecs / 60)}m ${totalSecs % 60}s total`)
+      } else {
+        setElapsed(`${totalSecs}s total`)
+      }
+      return
+    }
+
     const id = setInterval(() => {
       const secs = Math.floor((Date.now() - startTimeRef.current) / 1000)
       if (secs < 60) setElapsed(`${secs}s`)
@@ -586,7 +604,7 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
       else setElapsed(`${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`)
     }, 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [session?.started_at, session?.status, session?.last_activity])
 
   // Clear status message
   useEffect(() => {
