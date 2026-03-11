@@ -1,21 +1,19 @@
 # Progress Report
 
 ## Current Status
-Phase 1 of 7: TUI build infrastructure
+Phase 2 of 7: GitHub Actions release workflow
 Status: COMPLETED
 
 ## What Was Done This Session
-- tui/package.json: Added build:darwin-arm64, build:darwin-x64, build:linux-x64, build:linux-arm64, build:all scripts
-- tui/build.sh: Created developer convenience build script (executable)
-- .gitignore: Added tui/dist/ entry
+- .github/workflows/release.yml: Created release workflow triggered on v* tags; builds all 4 platform TUI binaries and uploads them as GitHub Release assets
 
 ## Immediate Next Task
-Begin Phase 2: Create .github/workflows/release.yml triggered on push of v* tags that builds all platform binaries and creates a GitHub Release with the four TUI binaries as assets.
+Begin Phase 3: Replace install.sh with a standalone curl-piped installer that downloads jq and TUI binaries from GitHub Releases, extracts a tarball, and symlinks tarvos to /usr/local/bin.
 
 ## Key Files for Next Task
-- .github/workflows/release.yml (create new)
-- tui/package.json (reference for build scripts)
+- install.sh (rewrite existing file)
 
 ## Gotchas
-- tui/dist/ is gitignored — binaries belong in GitHub Releases only
-- Build verified: tui/dist/tui-darwin-arm64 produced (63MB Mach-O arm64 executable)
+- install.sh must be self-contained (no dependency on local git clone)
+- tarvos.sh depends on lib/ — release must ship a tarball; installer extracts it
+- macOS: run xattr -dr com.apple.quarantine on downloaded binaries (Gatekeeper)

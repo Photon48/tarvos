@@ -1,0 +1,25 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install TUI dependencies
+        run: cd tui && bun install
+      - name: Build all platform binaries
+        run: cd tui && bun run build:all
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            tui/dist/tui-darwin-arm64
+            tui/dist/tui-darwin-x64
+            tui/dist/tui-linux-x64
+            tui/dist/tui-linux-arm64
