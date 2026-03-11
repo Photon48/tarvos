@@ -8,28 +8,16 @@ import type { Session } from "../types"
 // ─── Action definitions per status ────────────────────────────────────────────
 
 const ACTIONS: Record<string, Array<{ label: string; cmd: string[] }>> = {
-  running:     [
-    { label: "Attach",     cmd: ["attach"] },
-    { label: "Background", cmd: ["background"] },
-    { label: "Stop",       cmd: ["stop"] },
-  ],
-  stopped:     [
-    { label: "Resume",     cmd: ["resume"] },
-    { label: "Reject",     cmd: ["reject"] },
-  ],
-  done:        [
-    { label: "Accept",       cmd: ["accept"] },
-    { label: "Reject",       cmd: ["reject"] },
-    { label: "View Summary", cmd: ["summary"] },
-  ],
-  initialized: [
-    { label: "Start",      cmd: ["start"] },
-    { label: "Background", cmd: ["background"] },
-    { label: "Reject",     cmd: ["reject"] },
-  ],
-  failed:      [
-    { label: "Reject",     cmd: ["reject"] },
-  ],
+  running:     [{ label: "View",     cmd: ["view"] },          // client-side navigation only
+                { label: "Stop",     cmd: ["stop"] }],         // tarvos stop <name>
+  stopped:     [{ label: "Continue", cmd: ["continue"] },      // tarvos continue <name>
+                { label: "Reject",   cmd: ["reject", "--force"] }],
+  done:        [{ label: "Accept",       cmd: ["accept"] },
+                { label: "Reject",       cmd: ["reject", "--force"] },
+                { label: "View Summary", cmd: ["summary"] }],
+  initialized: [{ label: "Start",    cmd: ["begin"] },         // tarvos begin <name>
+                { label: "Reject",   cmd: ["reject", "--force"] }],
+  failed:      [{ label: "Reject",   cmd: ["reject", "--force"] }],
 }
 
 // ─── Helper: format relative time ────────────────────────────────────────────
@@ -198,6 +186,49 @@ function SessionTable({ sessions, selectedIndex }: SessionTableProps) {
   )
 }
 
+// ─── Reject Confirmation Dialog ───────────────────────────────────────────────
+
+interface RejectConfirmProps {
+  sessionName: string
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+function RejectConfirmDialog({ sessionName, onConfirm, onCancel }: RejectConfirmProps) {
+  useKeyboard((key) => {
+    if (key.name === "return") {
+      onConfirm()
+      return
+    }
+    if (key.name === "escape") {
+      onCancel()
+      return
+    }
+  })
+
+  return (
+    <box
+      position="absolute"
+      top={4}
+      left={4}
+      width={50}
+      flexDirection="column"
+      backgroundColor={theme.panelBg}
+      border
+      borderStyle="rounded"
+      borderColor={theme.error}
+      title=" Confirm Reject "
+      titleAlignment="center"
+      padding={1}
+      gap={1}
+    >
+      <text fg={theme.normal}>Reject '{sessionName}'?</text>
+      <text fg={theme.warning}>This will delete the branch and all session data.</text>
+      <text fg={theme.muted}>  [Enter] Confirm   [Esc] Cancel</text>
+    </box>
+  )
+}
+
 // ─── Action Overlay ───────────────────────────────────────────────────────────
 
 interface ActionOverlayProps {
@@ -205,38 +236,68 @@ interface ActionOverlayProps {
   onClose: () => void
   onNavigate: (sessionName: string) => void
   onViewSummary: (sessionName: string) => void
-  setStatusMessage: (msg: string) => void
+  setStatusMessage: (msg: string, isError?: boolean) => void
+  onRejectSucceeded: () => void
 }
 
-function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusMessage }: ActionOverlayProps) {
+function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusMessage, onRejectSucceeded }: ActionOverlayProps) {
   const [selectedAction, setSelectedAction] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false)
   const actions = ACTIONS[session.status] ?? []
 
+  const doReject = useCallback(async () => {
+    setShowRejectConfirm(false)
+    setLoading(true)
+    setStatusMessage(`Running: Reject...`)
+    try {
+      const { exitCode, stderr } = await runTarvosCommand(["reject", "--force", session.name])
+      if (exitCode === 0) {
+        setStatusMessage(`✓ Reject succeeded`, false)
+        onRejectSucceeded()
+      } else {
+        const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+        setStatusMessage(`✗ Reject failed${detail}`, true)
+      }
+    } catch (e) {
+      setStatusMessage(`✗ Error: ${e}`, true)
+    } finally {
+      setLoading(false)
+      onClose()
+    }
+  }, [session, onClose, setStatusMessage, onRejectSucceeded])
+
   const executeAction = useCallback(async (action: { label: string; cmd: string[] }) => {
+    // View navigates client-side
+    if (action.cmd[0] === "view") {
+      onNavigate(session.name)
+      onClose()
+      return
+    }
+    // Summary navigates client-side
+    if (action.cmd[0] === "summary") {
+      onViewSummary(session.name)
+      onClose()
+      return
+    }
+    // Reject requires confirmation dialog
+    if (action.cmd[0] === "reject") {
+      setShowRejectConfirm(true)
+      return
+    }
+
     setLoading(true)
     setStatusMessage(`Running: ${action.label}...`)
     try {
-      if (action.cmd[0] === "attach") {
-        // Navigate to run dashboard
-        onNavigate(session.name)
-        onClose()
-        return
-      }
-      if (action.cmd[0] === "summary") {
-        // Navigate to summary screen
-        onViewSummary(session.name)
-        onClose()
-        return
-      }
-      const { exitCode } = await runTarvosCommand([action.cmd[0], session.name])
+      const { exitCode, stderr } = await runTarvosCommand([...action.cmd, session.name])
       if (exitCode === 0) {
-        setStatusMessage(`✓ ${action.label} succeeded`)
+        setStatusMessage(`✓ ${action.label} succeeded`, false)
       } else {
-        setStatusMessage(`✗ ${action.label} failed (exit ${exitCode})`)
+        const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+        setStatusMessage(`✗ ${action.label} failed${detail}`, true)
       }
     } catch (e) {
-      setStatusMessage(`✗ Error: ${e}`)
+      setStatusMessage(`✗ Error: ${e}`, true)
     } finally {
       setLoading(false)
       onClose()
@@ -244,6 +305,7 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
   }, [session, onClose, onNavigate, onViewSummary, setStatusMessage])
 
   useKeyboard((key) => {
+    if (showRejectConfirm) return  // Let RejectConfirmDialog handle keys
     if (loading) return
     if (key.name === "escape") {
       onClose()
@@ -263,6 +325,16 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
       return
     }
   })
+
+  if (showRejectConfirm) {
+    return (
+      <RejectConfirmDialog
+        sessionName={session.name}
+        onConfirm={doReject}
+        onCancel={() => setShowRejectConfirm(false)}
+      />
+    )
+  }
 
   return (
     <box
@@ -308,7 +380,7 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
 interface NewSessionFormProps {
   onClose: () => void
   onCreated: () => void
-  setStatusMessage: (msg: string) => void
+  setStatusMessage: (msg: string, isError?: boolean) => void
 }
 
 function NewSessionForm({ onClose, onCreated, setStatusMessage }: NewSessionFormProps) {
@@ -325,13 +397,14 @@ function NewSessionForm({ onClose, onCreated, setStatusMessage }: NewSessionForm
     setError("")
     setStatusMessage("Creating session...")
     try {
-      const { exitCode } = await runTarvosCommand(["init", name.trim(), "--prd", prdPath.trim()])
+      const { exitCode, stderr } = await runTarvosCommand(["init", name.trim(), "--prd", prdPath.trim()])
       if (exitCode === 0) {
-        setStatusMessage(`✓ Session '${name}' created`)
+        setStatusMessage(`✓ Session '${name}' created`, false)
         onCreated()
         onClose()
       } else {
-        setError(`tarvos init failed (exit ${exitCode})`)
+        const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+        setError(`tarvos init failed${detail}`)
         setStatusMessage("")
       }
     } catch (e) {
@@ -417,10 +490,11 @@ function NewSessionForm({ onClose, onCreated, setStatusMessage }: NewSessionForm
 
 interface FooterProps {
   statusMessage: string
+  statusIsError: boolean
   sessionCount: number
 }
 
-function Footer({ statusMessage, sessionCount }: FooterProps) {
+function Footer({ statusMessage, statusIsError, sessionCount }: FooterProps) {
   return (
     <box
       flexDirection="row"
@@ -430,7 +504,7 @@ function Footer({ statusMessage, sessionCount }: FooterProps) {
       height={1}
     >
       {statusMessage ? (
-        <text fg={theme.warning}>{statusMessage}</text>
+        <text fg={statusIsError ? theme.error : theme.success}>{statusMessage}</text>
       ) : (
         <text fg={theme.muted}>
           [n] New  [Enter] Actions  [j/k] Navigate  [R] Refresh  [q] Quit
@@ -455,8 +529,15 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [showOverlay, setShowOverlay] = useState(false)
   const [showNewForm, setShowNewForm] = useState(false)
-  const [statusMessage, setStatusMessage] = useState("")
+  const [statusMessage, setStatusMessageRaw] = useState("")
+  const [statusIsError, setStatusIsError] = useState(false)
+  const [showRejectConfirmQuick, setShowRejectConfirmQuick] = useState(false)
   const [loading, setLoading] = useState(true)
+
+  const setStatusMessage = useCallback((msg: string, isError?: boolean) => {
+    setStatusMessageRaw(msg)
+    setStatusIsError(isError === true)
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -464,11 +545,11 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
       setSessions(loaded)
       setSelectedIndex(i => Math.min(i, Math.max(0, loaded.length - 1)))
     } catch {
-      setStatusMessage("Failed to load sessions")
+      setStatusMessage("Failed to load sessions", true)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [setStatusMessage])
 
   // Initial load
   useEffect(() => {
@@ -484,13 +565,30 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
   // Clear status message after 4 seconds
   useEffect(() => {
     if (!statusMessage) return
-    const id = setTimeout(() => setStatusMessage(""), 4000)
+    const id = setTimeout(() => setStatusMessageRaw(""), 4000)
     return () => clearTimeout(id)
   }, [statusMessage])
+
+  const handleRejectQuick = useCallback(async () => {
+    const session = sessions[selectedIndex]
+    if (!session) return
+    setShowRejectConfirmQuick(false)
+    const { exitCode, stderr } = await runTarvosCommand(["reject", "--force", session.name])
+    if (exitCode === 0) {
+      setStatusMessage(`✓ Rejected ${session.name}`, false)
+      refresh()
+    } else {
+      const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+      setStatusMessage(`✗ Reject failed${detail}`, true)
+    }
+  }, [sessions, selectedIndex, refresh, setStatusMessage])
 
   // Keyboard handler — only when no overlay is open
   useKeyboard((key) => {
     if (showOverlay || showNewForm) return
+
+    // Let reject confirm dialog handle keys when open
+    if (showRejectConfirmQuick) return
 
     if (key.name === "q" || (key.ctrl && key.name === "c")) {
       renderer.destroy()
@@ -521,32 +619,32 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
     const session = sessions[selectedIndex]
     if (!session) return
     if (key.name === "s" && session.status === "initialized") {
-      runTarvosCommand(["start", session.name]).then(({ exitCode }) => {
-        setStatusMessage(exitCode === 0 ? `✓ Started ${session.name}` : `✗ Start failed`)
-        refresh()
-      })
-      return
-    }
-    if (key.name === "b") {
-      const cmd = session.status === "running" ? "background" : "background"
-      runTarvosCommand([cmd, session.name]).then(({ exitCode }) => {
-        setStatusMessage(exitCode === 0 ? `✓ Backgrounded ${session.name}` : `✗ Background failed`)
+      runTarvosCommand(["begin", session.name]).then(({ exitCode, stderr }) => {
+        if (exitCode === 0) {
+          setStatusMessage(`✓ Started ${session.name}`, false)
+        } else {
+          const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+          setStatusMessage(`✗ Start failed${detail}`, true)
+        }
         refresh()
       })
       return
     }
     if (key.name === "a" && session.status === "done") {
-      runTarvosCommand(["accept", session.name]).then(({ exitCode }) => {
-        setStatusMessage(exitCode === 0 ? `✓ Accepted ${session.name}` : `✗ Accept failed`)
+      runTarvosCommand(["accept", session.name]).then(({ exitCode, stderr }) => {
+        if (exitCode === 0) {
+          setStatusMessage(`✓ Accepted ${session.name}`, false)
+        } else {
+          const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+          setStatusMessage(`✗ Accept failed${detail}`, true)
+        }
         refresh()
       })
       return
     }
     if (key.name === "r") {
-      runTarvosCommand(["reject", session.name]).then(({ exitCode }) => {
-        setStatusMessage(exitCode === 0 ? `✓ Rejected ${session.name}` : `✗ Reject failed`)
-        refresh()
-      })
+      // Show confirmation before rejecting
+      setShowRejectConfirmQuick(true)
       return
     }
   })
@@ -563,7 +661,11 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
       ) : (
         <SessionTable sessions={sessions} selectedIndex={selectedIndex} />
       )}
-      <Footer statusMessage={statusMessage} sessionCount={sessions.length} />
+      <Footer
+        statusMessage={statusMessage}
+        statusIsError={statusIsError}
+        sessionCount={sessions.length}
+      />
 
       {/* Action overlay */}
       {showOverlay && selectedSession ? (
@@ -573,6 +675,7 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
           onNavigate={onNavigate}
           onViewSummary={onViewSummary}
           setStatusMessage={setStatusMessage}
+          onRejectSucceeded={refresh}
         />
       ) : null}
 
@@ -582,6 +685,15 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
           onClose={() => setShowNewForm(false)}
           onCreated={refresh}
           setStatusMessage={setStatusMessage}
+        />
+      ) : null}
+
+      {/* Quick reject confirmation */}
+      {showRejectConfirmQuick && selectedSession ? (
+        <RejectConfirmDialog
+          sessionName={selectedSession.name}
+          onConfirm={handleRejectQuick}
+          onCancel={() => setShowRejectConfirmQuick(false)}
         />
       ) : null}
     </box>

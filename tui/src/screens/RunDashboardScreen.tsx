@@ -169,26 +169,50 @@ interface RunHeaderProps {
 function RunHeader({ sessionName, state }: RunHeaderProps) {
   const spinner = useSpinner()
   const isRunning = state.status === "RUNNING"
-  const statusColor = statusColors[state.status.toLowerCase()] ?? theme.normal
-  const statusIcon = statusIcons[state.status.toLowerCase()] ?? "?"
+  const isStopped = (state.status as string) === "STOPPED" || state.status === "IDLE"
+  const isDone = state.status === "DONE"
+  const isFailed = state.status === "ERROR"
+
+  // Use accent band for running, warning for stopped, success for done, error for failed
+  const bandBg = isRunning
+    ? theme.accent
+    : isDone
+    ? theme.success
+    : isFailed
+    ? theme.error
+    : isStopped
+    ? theme.warning
+    : theme.headerBg
+
+  // For colored bands, use dark text; otherwise use normal
+  const textFg = (isRunning || isDone || isFailed || isStopped) ? "#1C1C1C" : theme.normal
+  const mutedFg = (isRunning || isDone || isFailed || isStopped) ? "#3C3C3C" : theme.muted
+
+  const statusLabel = isRunning
+    ? `${spinner} RUNNING — Loop ${state.currentLoop}/${state.maxLoops}`
+    : isStopped
+    ? `◌ STOPPED — press [c] to continue`
+    : isDone
+    ? `✓ COMPLETE`
+    : isFailed
+    ? `✗ FAILED`
+    : `${state.status} — Loop ${state.currentLoop}/${state.maxLoops}`
 
   return (
     <box
       flexDirection="row"
       width="100%"
-      backgroundColor={theme.headerBg}
+      backgroundColor={bandBg}
       paddingX={2}
       height={1}
     >
-      <text fg={theme.accent}>
+      <text fg={textFg}>
         <strong>TARVOS</strong>
       </text>
-      <text fg={theme.muted}> › </text>
-      <text fg={theme.normal}>{sessionName}</text>
-      <text fg={theme.muted}> › </text>
-      <text fg={statusColor}>{isRunning ? spinner : statusIcon} {state.status}</text>
-      <box flexGrow={1} />
-      <text fg={theme.muted}>Loop {state.currentLoop}/{state.maxLoops}</text>
+      <text fg={mutedFg}> › </text>
+      <text fg={textFg}>{sessionName}</text>
+      <text fg={mutedFg}> › </text>
+      <text fg={textFg}>{statusLabel}</text>
     </box>
   )
 }
@@ -377,9 +401,14 @@ function ActivityLog({ entries, scrollOffset, viewMode, height }: ActivityLogPro
 interface RunFooterProps {
   viewMode: "summary" | "raw"
   statusMessage: string
+  statusIsError: boolean
+  runStatus: RunStatus
 }
 
-function RunFooter({ viewMode, statusMessage }: RunFooterProps) {
+function RunFooter({ viewMode, statusMessage, statusIsError, runStatus }: RunFooterProps) {
+  const isRunning = runStatus === "RUNNING"
+  const isStopped = (runStatus as string) === "STOPPED" || runStatus === "IDLE"
+
   return (
     <box
       flexDirection="row"
@@ -389,10 +418,10 @@ function RunFooter({ viewMode, statusMessage }: RunFooterProps) {
       height={1}
     >
       {statusMessage ? (
-        <text fg={theme.warning}>{statusMessage}</text>
+        <text fg={statusIsError ? theme.error : theme.success}>{statusMessage}</text>
       ) : (
         <text fg={theme.muted}>
-          [↑/k] Scroll up  [↓/j] Scroll down  [v] {viewMode === "summary" ? "Raw" : "Summary"} view  [s] Summary  [b] Background  [q] Back
+          [↑↓] Scroll  [v] Toggle raw  {isRunning ? "[s] Stop  " : ""}{isStopped ? "[c] Continue  " : ""}[q] Back
         </text>
       )}
     </box>
@@ -410,9 +439,15 @@ interface RunDashboardScreenProps {
 export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDashboardScreenProps) {
   const renderer = useRenderer()
   const { height } = useTerminalDimensions()
-  const [statusMessage, setStatusMessage] = useState("")
+  const [statusMessage, setStatusMessageRaw] = useState("")
+  const [statusIsError, setStatusIsError] = useState(false)
   const [elapsed, setElapsed] = useState("0s")
   const startTimeRef = useRef(Date.now())
+
+  const setStatusMessage = (msg: string, isError?: boolean) => {
+    setStatusMessageRaw(msg)
+    setStatusIsError(isError === true)
+  }
 
   const [runState, dispatch] = useReducer(reducer, {
     status: "IDLE",
@@ -487,7 +522,7 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
   // Clear status message
   useEffect(() => {
     if (!statusMessage) return
-    const id = setTimeout(() => setStatusMessage(""), 4000)
+    const id = setTimeout(() => setStatusMessageRaw(""), 4000)
     return () => clearTimeout(id)
   }, [statusMessage])
 
@@ -517,20 +552,35 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
       dispatch({ type: "RESET_SCROLL" })
       return
     }
-    if (key.name === "b") {
-      setStatusMessage("Backgrounding session...")
-      runTarvosCommand(["background", sessionName]).then(({ exitCode }) => {
-        setStatusMessage(exitCode === 0 ? "✓ Session backgrounded" : "✗ Background failed")
+    if (key.name === "s" && runState.status === "RUNNING") {
+      setStatusMessage("Stopping session...", false)
+      runTarvosCommand(["stop", sessionName]).then(({ exitCode, stderr }) => {
+        if (exitCode === 0) {
+          setStatusMessage("✓ Session stopped", false)
+        } else {
+          const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+          setStatusMessage(`✗ Stop failed${detail}`, true)
+        }
+        refreshSession()
+      })
+      return
+    }
+    if (key.name === "c" && (runState.status === "IDLE" || (runState.status as string) === "STOPPED")) {
+      setStatusMessage("Resuming session...", false)
+      runTarvosCommand(["continue", sessionName]).then(({ exitCode, stderr }) => {
+        if (exitCode === 0) {
+          setStatusMessage("✓ Session resumed", false)
+        } else {
+          const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+          setStatusMessage(`✗ Continue failed${detail}`, true)
+        }
+        refreshSession()
       })
       return
     }
     if (key.name === "r") {
       refreshSession()
-      setStatusMessage("Refreshed")
-      return
-    }
-    if (key.name === "s" && onViewSummary) {
-      onViewSummary(sessionName)
+      setStatusMessage("Refreshed", false)
       return
     }
   })
@@ -550,7 +600,12 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
         viewMode={runState.viewMode}
         height={logHeight}
       />
-      <RunFooter viewMode={runState.viewMode} statusMessage={statusMessage} />
+      <RunFooter
+        viewMode={runState.viewMode}
+        statusMessage={statusMessage}
+        statusIsError={statusIsError}
+        runStatus={runState.status}
+      />
     </box>
   )
 }
