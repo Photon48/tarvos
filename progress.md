@@ -1,23 +1,20 @@
 # Progress Report
 
 ## Current Status
-Phase 4 of 4: Deprecation
+Phase 0 of 3: Worktree Isolation (Critical Safety Fix)
 Status: COMPLETED
 
 ## What Was Done This Session
-- lib/agent-logger.sh: New file — extracted non-TUI logging functions from log-manager.sh
-- lib/tui-core.sh, lib/tui-app.sh, lib/list-tui.sh, lib/log-manager.sh: Deleted
-- tarvos.sh: source log-manager.sh → agent-logger.sh; removed all tui_* calls (tui_init, tui_cleanup, tui_start_events_tail, tui_set_status, tui_set_phase_info)
-- README.md: Added bun prerequisite and TUI install step; updated tarvos tui section
-- tests/smoke-test.sh: Replaced 6 bash-TUI-dependent tests with TypeScript TUI tests (file existence, typecheck, theme exports, event format, session state parsing)
+- tarvos.sh (cmd_begin ~682): Replaced silent PROJECT_DIR fallback with hard abort (empty WORKTREE_PATH or missing dir)
+- tarvos.sh (cmd_continue ~844): Same hard abort fix applied for continue path
+- tarvos.sh (run_agent_loop ~1448): Added safety guard after `cd` to abort if running in main repo root
+- tarvos.sh (cmd_continue ~870): Fixed `detach_start` to pass `"continue"` as 4th arg (was defaulting to "begin")
+- tarvos.sh (cmd_begin ~719): Removed `tarvos attach` line from begin output
 
 ## Immediate Next Task
-All 4 phases are complete. The OpenTUI migration is fully done.
-Run `tarvos tui` to verify end-to-end, then close out.
+Begin Phase 1: Fix events file path mismatch. Start by adding `log_dir` field to `lib/session-manager.sh` session init and adding `session_set_log_dir` function.
 
 ## Key Files for Next Task
-- None — all phases complete
-
-## Gotchas
-- bun is at /Users/rishugoyal/.bun/bin/bun
-- All 13 smoke tests pass; tsc --noEmit passes cleanly
+- lib/session-manager.sh
+- tarvos.sh (run_agent_loop, after init_logging)
+- tui/src/data/events.ts

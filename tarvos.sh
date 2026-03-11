@@ -679,13 +679,18 @@ cmd_begin() {
         exit 1
     fi
 
-    # Project directory: use the worktree for isolation, or CWD if no worktree
+    # Project directory: use the worktree for isolation — hard abort if missing
     local PROJECT_DIR
-    if [[ -n "$WORKTREE_PATH" ]] && [[ -d "$WORKTREE_PATH" ]]; then
-        PROJECT_DIR="$WORKTREE_PATH"
-    else
-        PROJECT_DIR="$(pwd)"
+    if [[ -z "$WORKTREE_PATH" ]]; then
+        error "No worktree path found for session '${session_name}'. Cannot continue."
+        exit 1
     fi
+    if [[ ! -d "$WORKTREE_PATH" ]]; then
+        error "Worktree directory '${WORKTREE_PATH}' does not exist."
+        error "It may have been manually deleted. To clean up: tarvos reject ${session_name}"
+        exit 1
+    fi
+    PROJECT_DIR="$WORKTREE_PATH"
 
     # ── Detached (background) mode ──────────────────────────────
     # If we're already in a non-interactive/background context (stdin not a tty),
@@ -716,8 +721,6 @@ cmd_begin() {
         echo "View progress in the TUI:"
         echo "  tarvos tui"
         echo ""
-        echo "Or tail the raw log:"
-        echo "  tarvos attach ${session_name}"
         exit 0
     fi
 }
@@ -841,13 +844,18 @@ cmd_continue() {
         exit 1
     fi
 
-    # Project directory: use the worktree for isolation, or CWD if no worktree
+    # Project directory: use the worktree for isolation — hard abort if missing
     local PROJECT_DIR
-    if [[ -n "$WORKTREE_PATH" ]] && [[ -d "$WORKTREE_PATH" ]]; then
-        PROJECT_DIR="$WORKTREE_PATH"
-    else
-        PROJECT_DIR="$(pwd)"
+    if [[ -z "$WORKTREE_PATH" ]]; then
+        error "No worktree path found for session '${session_name}'. Cannot continue."
+        exit 1
     fi
+    if [[ ! -d "$WORKTREE_PATH" ]]; then
+        error "Worktree directory '${WORKTREE_PATH}' does not exist."
+        error "It may have been manually deleted. To clean up: tarvos reject ${session_name}"
+        exit 1
+    fi
+    PROJECT_DIR="$WORKTREE_PATH"
 
     # Check that the session isn't already running in background
     if detach_is_running "$session_name"; then
@@ -859,7 +867,7 @@ cmd_continue() {
 
     # Always run detached — background tarvos begin will handle status transition
     # and pick up continue_mode=1 automatically (stopped sessions always resume)
-    detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR"
+    detach_start "$session_name" "${SCRIPT_DIR}/tarvos.sh" "$PROJECT_DIR" "continue"
     echo ""
     echo "View progress in the TUI:"
     echo "  tarvos tui"
@@ -1437,7 +1445,14 @@ run_agent_loop() {
     local continue_mode="$6"
     local session_name="${7:-}"
 
-    cd "$PROJECT_DIR"
+    cd "$PROJECT_DIR" || { error "Failed to cd into project dir: ${PROJECT_DIR}"; exit 1; }
+    # Safety: ensure we are NOT running in the main repo root
+    local _main_root
+    _main_root="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "")"
+    if [[ -n "$_main_root" ]] && [[ "$(pwd)" == "$_main_root" ]]; then
+        error "SAFETY ABORT: agent loop would run in the main repo root. Refusing to proceed."
+        exit 1
+    fi
 
     # Determine the progress.md location:
     # If a session is active, use session-local progress.md; otherwise fall back to project root
