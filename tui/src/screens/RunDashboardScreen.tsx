@@ -5,6 +5,7 @@ import { watchLogDir } from "../data/events"
 import { loadSessions, getSessionDir } from "../data/sessions"
 import { runTarvosCommand } from "../commands"
 import type { Session, TuiEvent } from "../types"
+import { Owl, type OwlState } from "../components/Owl"
 import { watch } from "fs"
 import { join } from "path"
 
@@ -182,6 +183,15 @@ function RunHeader({ sessionName, state }: RunHeaderProps) {
   const isDone = state.status === "DONE"
   const isFailed = state.status === "ERROR"
 
+  // Derive owl state from run status
+  const owlState: OwlState = isFailed
+    ? "error"
+    : isDone
+    ? "done"
+    : isRunning
+    ? "working"
+    : "idle"
+
   // Use accent band for running, warning for stopped, success for done, error for failed
   const bandBg = isRunning
     ? theme.accent
@@ -215,9 +225,8 @@ function RunHeader({ sessionName, state }: RunHeaderProps) {
       paddingX={2}
       height={1}
     >
-      <text fg={textFg}>
-        <strong>TARVOS</strong>
-      </text>
+      <Owl state={owlState} />
+      <text fg={textFg}> <strong>TARVOS</strong></text>
       <text fg={mutedFg}> › </text>
       <text fg={textFg}>{sessionName}</text>
       <text fg={mutedFg}> › </text>

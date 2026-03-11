@@ -1,19 +1,19 @@
 # Progress Report
 
 ## Current Status
-Phase 3 of 5: RunDashboard Live Monitoring Fixes
+Phase 4 of 5: Full TUI Visual Redesign
 Status: COMPLETED
 
 ## What Was Done This Session
-- tui/src/data/events.ts: Replaced single-file watcher with watchLogDir() — watches entire logDir, drains all loop-NNN-events.jsonl files; fallback to 1s polling if fs.watch fails
-- tui/src/types.ts: Added `loop` and `ts` fields to TuiEvent interface
-- tui/src/screens/RunDashboardScreen.tsx: Switched to watchLogDir; added log_dir polling (500ms, 15s max) when log_dir is empty on mount; LOOP_START action in reducer updates currentLoop and sets status RUNNING; loop_start events via EVENT path also update currentLoop
-- tarvos.sh: Emit loop_start + launching status at top of run_iteration(); emit context_limit status on context limit; emit running status after successful iteration; emit done status on ALL_PHASES_COMPLETE
+- tui/src/components/Owl.tsx: New animated owl mascot — idle (2s blink), working (150ms), done/error (static); compact inline + full multi-line variants
+- tui/src/theme.ts: Added `owl` sub-object with idle/working/done/error colors
+- tui/src/screens/SessionListScreen.tsx: Header now shows inline Owl + session count [N sessions, M running]; column headers hidden when width < 80
+- tui/src/screens/RunDashboardScreen.tsx: RunHeader now shows mini Owl derived from run status (idle/working/done/error)
 
 ## Immediate Next Task
-Begin Phase 4: Full TUI Visual Redesign — create Owl.tsx component, redesign SessionListScreen and RunDashboardScreen layouts, add theme.ts owl colors.
+Begin Phase 5: Polish & Hardening — add terminal width < 80 warning, fix bun path portability in tarvos.sh, graceful watcher error handling, and `tarvos tui view <session>` CLI shortcut.
 
 ## Key Files for Next Task
-- tui/src/components/Owl.tsx (new file)
-- tui/src/screens/SessionListScreen.tsx
-- tui/src/theme.ts
+- tarvos.sh (bun path portability at lines ~1066 and ~1695)
+- tui/src/App.tsx (width guard + TARVOS_TUI_INITIAL_SESSION env var)
+- tui/src/screens/RunDashboardScreen.tsx (graceful watcher fallback — already done in events.ts)

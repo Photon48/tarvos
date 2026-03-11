@@ -4,6 +4,7 @@ import { theme, statusIcons, statusColors, BRAILLE_SPINNER } from "../theme"
 import { loadSessions, getSessionDir, TARVOS_SESSIONS_DIR } from "../data/sessions"
 import { runTarvosCommand } from "../commands"
 import type { Session } from "../types"
+import { Owl, type OwlState } from "../components/Owl"
 import fs from "fs"
 
 // ─── Action definitions per status ────────────────────────────────────────────
@@ -47,12 +48,28 @@ function useSpinner(): string {
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-function Header() {
+interface HeaderProps {
+  sessions: Session[]
+}
+
+function Header({ sessions }: HeaderProps) {
   const [time, setTime] = useState(() => new Date().toLocaleTimeString())
   useEffect(() => {
     const id = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000)
     return () => clearInterval(id)
   }, [])
+
+  // Determine owl state from sessions
+  const owlState: OwlState = sessions.some(s => s.status === "failed")
+    ? "error"
+    : sessions.some(s => s.status === "running")
+    ? "working"
+    : sessions.some(s => s.status === "done" || s.status === "stopped")
+    ? "idle"
+    : "idle"
+
+  const runningCount = sessions.filter(s => s.status === "running").length
+  const countLabel = `${sessions.length} session${sessions.length !== 1 ? "s" : ""}, ${runningCount} running`
 
   return (
     <box
@@ -63,10 +80,10 @@ function Header() {
       paddingY={0}
       height={1}
     >
-      <text fg={theme.accent}>
-        <strong>TARVOS</strong>
-      </text>
+      <Owl state={owlState} />
+      <text fg={theme.accent}> <strong>TARVOS</strong></text>
       <text fg={theme.normal}> — Session Manager</text>
+      <text fg={theme.muted}>  [{countLabel}]</text>
       <box flexGrow={1} />
       <text fg={theme.muted}>{time}</text>
     </box>
@@ -141,6 +158,8 @@ interface SessionTableProps {
 
 function SessionTable({ sessions, selectedIndex }: SessionTableProps) {
   const spinner = useSpinner()
+  const { width } = useTerminalDimensions()
+  const showHeaders = width >= 80
 
   if (sessions.length === 0) {
     return (
@@ -159,19 +178,21 @@ function SessionTable({ sessions, selectedIndex }: SessionTableProps) {
 
   return (
     <box flexDirection="column" flexGrow={1} width="100%">
-      {/* Column headers */}
-      <box
-        flexDirection="row"
-        width="100%"
-        backgroundColor={theme.panelBg}
-        paddingX={1}
-        height={1}
-      >
-        <text fg={theme.muted}>{"  "}</text>
-        <text fg={theme.muted}>{"  STATUS"}</text>
-        <box flexGrow={1} />
-        <text fg={theme.muted}>{"BRANCH        LOOPS  ACTIVITY"}</text>
-      </box>
+      {/* Column headers — only show when terminal width >= 80 */}
+      {showHeaders ? (
+        <box
+          flexDirection="row"
+          width="100%"
+          backgroundColor={theme.panelBg}
+          paddingX={1}
+          height={1}
+        >
+          <text fg={theme.muted}>{"  "}</text>
+          <text fg={theme.muted}>{"  STATUS"}</text>
+          <box flexGrow={1} />
+          <text fg={theme.muted}>{"BRANCH        LOOPS  ACTIVITY"}</text>
+        </box>
+      ) : null}
       {/* Session rows */}
       <box flexDirection="column" flexGrow={1} width="100%">
         {sessions.map((session, i) => (
@@ -731,7 +752,7 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor="#1C1C1C">
-      <Header />
+      <Header sessions={sessions} />
       {loading ? (
         <box flexGrow={1} justifyContent="center" alignItems="center">
           <text fg={theme.muted}>Loading sessions...</text>
