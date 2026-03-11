@@ -8,14 +8,14 @@ import type { Session } from "../types"
 // ─── Action definitions per status ────────────────────────────────────────────
 
 const ACTIONS: Record<string, Array<{ label: string; cmd: string[] }>> = {
-  running:     [{ label: "View",     cmd: ["view"] },          // client-side navigation only
-                { label: "Stop",     cmd: ["stop"] }],         // tarvos stop <name>
-  stopped:     [{ label: "Continue", cmd: ["continue"] },      // tarvos continue <name>
+  running:     [{ label: "View",     cmd: ["view"] },                    // client-side navigation only
+                { label: "Stop",     cmd: ["stop"] }],                   // tarvos stop <name>
+  stopped:     [{ label: "Continue", cmd: ["continue", "--detach"] },    // tarvos continue --detach <name>
                 { label: "Reject",   cmd: ["reject", "--force"] }],
   done:        [{ label: "Accept",       cmd: ["accept"] },
                 { label: "Reject",       cmd: ["reject", "--force"] },
                 { label: "View Summary", cmd: ["summary"] }],
-  initialized: [{ label: "Start",    cmd: ["begin"] },         // tarvos begin <name>
+  initialized: [{ label: "Start",    cmd: ["begin", "--detach"] },       // tarvos begin --detach <name>
                 { label: "Reject",   cmd: ["reject", "--force"] }],
   failed:      [{ label: "Reject",   cmd: ["reject", "--force"] }],
 }
@@ -397,7 +397,7 @@ function NewSessionForm({ onClose, onCreated, setStatusMessage }: NewSessionForm
     setError("")
     setStatusMessage("Creating session...")
     try {
-      const { exitCode, stderr } = await runTarvosCommand(["init", name.trim(), "--prd", prdPath.trim()])
+      const { exitCode, stderr } = await runTarvosCommand(["init", prdPath.trim(), "--name", name.trim(), "--no-preview"])
       if (exitCode === 0) {
         setStatusMessage(`✓ Session '${name}' created`, false)
         onCreated()
@@ -619,7 +619,7 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
     const session = sessions[selectedIndex]
     if (!session) return
     if (key.name === "s" && session.status === "initialized") {
-      runTarvosCommand(["begin", session.name]).then(({ exitCode, stderr }) => {
+      runTarvosCommand(["begin", "--detach", session.name]).then(({ exitCode, stderr }) => {
         if (exitCode === 0) {
           setStatusMessage(`✓ Started ${session.name}`, false)
         } else {

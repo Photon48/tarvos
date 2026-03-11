@@ -567,7 +567,7 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     }
     if (key.name === "c" && (runState.status === "IDLE" || (runState.status as string) === "STOPPED")) {
       setStatusMessage("Resuming session...", false)
-      runTarvosCommand(["continue", sessionName]).then(({ exitCode, stderr }) => {
+      runTarvosCommand(["continue", "--detach", sessionName]).then(({ exitCode, stderr }) => {
         if (exitCode === 0) {
           setStatusMessage("✓ Session resumed", false)
         } else {

@@ -163,7 +163,7 @@ process_stream() {
                         if [[ -n "$sig_found" ]]; then
                             local ts
                             ts=$(date +%s)
-                            emit_tui_event "{\"type\":\"signal\",\"value\":\"${sig_found}\",\"ts\":${ts}}"
+                            emit_tui_event "{\"type\":\"signal\",\"signal\":\"${sig_found}\",\"ts\":${ts}}"
                         fi
                     fi
                 fi
@@ -246,6 +246,13 @@ extract_usage_from_line() {
 
         # Update progress bar
         log_token_progress "$total" "$token_limit"
+
+        # Emit token event to TUI
+        if (( total > 0 )); then
+            local ts
+            ts=$(date +%s)
+            emit_tui_event "{\"type\":\"tokens\",\"tokens\":${total},\"ts\":${ts}}"
+        fi
 
         # Check context limit
         if (( total >= token_limit )); then
