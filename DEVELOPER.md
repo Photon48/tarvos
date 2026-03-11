@@ -20,13 +20,61 @@ git clone https://github.com/anomalyco/tarvos.git
 cd tarvos
 ```
 
-### Install your local copy
+---
+
+## Production vs Development — the key distinction
+
+There are two completely separate tarvos runtimes on your machine. They never interfere with each other.
+
+| Command | Which tarvos runs | How to upgrade |
+|---------|------------------|----------------|
+| `tarvos` | `~/.local/share/tarvos/tarvos.sh` (the installed release) | `tarvos update` |
+| `./tarvos-dev.sh` | `<your-repo>/tarvos.sh` (your local git branch) | `git checkout <branch>` |
+
+**Production** (`tarvos`) is installed by the one-liner and lives entirely under `~/.local/share/tarvos/`. It is never touched by edits to your repo. Run `tarvos update` to pull a new release.
+
+**Development** (`./tarvos-dev.sh`) is a thin wrapper checked into the repo. It always runs the `tarvos.sh` in the repo root — whatever branch you are currently on. No install step, no env vars, immediate feedback.
 
 ```bash
-./install.sh
+# production (stable, downloaded release)
+tarvos init my-plan.md --name my-feature
+
+# development (your local branch, whatever state it's in)
+./tarvos-dev.sh init my-plan.md --name my-feature
 ```
 
-This downloads bundled jq and the prebuilt TUI binary into `~/.local/share/tarvos/bin/`, extracts `tarvos.sh` + `lib/` there, and symlinks `tarvos` into `/usr/local/bin`.
+Each invocation prints a small banner to stderr so it is always obvious which runtime you are using:
+
+```
+[tarvos-dev] repo: /Users/you/Documents/tarvos
+[tarvos-dev] branch: my-experimental-branch
+```
+
+### Putting tarvos-dev on PATH (optional)
+
+If you want to type `tarvos-dev` instead of `./tarvos-dev.sh` from any directory:
+
+```bash
+ln -sf "$PWD/tarvos-dev.sh" ~/bin/tarvos-dev
+# ensure ~/bin is on PATH (add to ~/.zshrc if needed):
+# export PATH="$HOME/bin:$PATH"
+```
+
+The symlink is to the absolute path of the script, so it continues to point at your repo regardless of where you call it from.
+
+### Shared bundled dependencies
+
+Both runtimes share the same bundled `jq` and TUI binaries at `~/.local/share/tarvos/bin/`. This is intentional — you only need one copy of the native binaries. If you are actively developing the TUI itself, see the TUI section below for how to override the binary per-invocation.
+
+---
+
+### Production install (one-liner)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash
+```
+
+This downloads jq and the prebuilt TUI binary into `~/.local/share/tarvos/bin/`, extracts `tarvos.sh` + `lib/` there, and symlinks `tarvos` into `/usr/local/bin`.
 
 ---
 
@@ -83,30 +131,35 @@ Output lands in `tui/dist/`.
 
 ### Test your local TUI build without reinstalling
 
+Use `tarvos-dev.sh` with the `TUI_BIN_PATH` override:
+
 ```bash
-TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" tarvos tui
+TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" ./tarvos-dev.sh tui
 ```
 
+This keeps production's TUI untouched while you iterate on yours.
+
 `tarvos.sh` resolves the TUI binary in this order:
-1. `$TUI_BIN_PATH` env var
-2. `~/.local/share/tarvos/bin/tui` (installed)
-3. `tui/dist/tui-<os>-<arch>` relative to the script (dev fallback)
+1. `$TUI_BIN_PATH` env var (dev override)
+2. `~/.local/share/tarvos/bin/tui` (installed release binary)
+3. `tui/dist/tui-<os>-<arch>` relative to the script (automatic dev fallback if neither above exists)
 
 ---
 
 ## Working on `tarvos.sh` / `lib/`
 
-The scripts run directly — no compilation needed. Edit and run immediately:
+The scripts run directly — no compilation needed. Edit and run immediately via `tarvos-dev.sh`:
 
 ```bash
-# after editing tarvos.sh or lib/*.sh
-tarvos <subcommand>
+# edit tarvos.sh or lib/*.sh, then test instantly:
+./tarvos-dev.sh <subcommand>
+
+# switch to a different branch and test it without any reinstall:
+git checkout my-experimental-branch
+./tarvos-dev.sh begin my-session
 ```
 
-If you installed via `install.sh`, your system `tarvos` points to the copy in `~/.local/share/tarvos/tarvos.sh`. To test local edits without reinstalling, either:
-
-- Re-run `./install.sh` (fast, reruns extract step)
-- Or invoke the script directly: `bash tarvos.sh <subcommand>`
+The production `tarvos` command is never affected. Both can run simultaneously against different sessions.
 
 ---
 
