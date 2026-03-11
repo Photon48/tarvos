@@ -204,10 +204,11 @@ interface ActionOverlayProps {
   session: Session
   onClose: () => void
   onNavigate: (sessionName: string) => void
+  onViewSummary: (sessionName: string) => void
   setStatusMessage: (msg: string) => void
 }
 
-function ActionOverlay({ session, onClose, onNavigate, setStatusMessage }: ActionOverlayProps) {
+function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusMessage }: ActionOverlayProps) {
   const [selectedAction, setSelectedAction] = useState(0)
   const [loading, setLoading] = useState(false)
   const actions = ACTIONS[session.status] ?? []
@@ -219,6 +220,12 @@ function ActionOverlay({ session, onClose, onNavigate, setStatusMessage }: Actio
       if (action.cmd[0] === "attach") {
         // Navigate to run dashboard
         onNavigate(session.name)
+        onClose()
+        return
+      }
+      if (action.cmd[0] === "summary") {
+        // Navigate to summary screen
+        onViewSummary(session.name)
         onClose()
         return
       }
@@ -234,7 +241,7 @@ function ActionOverlay({ session, onClose, onNavigate, setStatusMessage }: Actio
       setLoading(false)
       onClose()
     }
-  }, [session, onClose, onNavigate, setStatusMessage])
+  }, [session, onClose, onNavigate, onViewSummary, setStatusMessage])
 
   useKeyboard((key) => {
     if (loading) return
@@ -439,9 +446,10 @@ function Footer({ statusMessage, sessionCount }: FooterProps) {
 
 interface SessionListScreenProps {
   onNavigate: (sessionName: string) => void
+  onViewSummary: (sessionName: string) => void
 }
 
-export function SessionListScreen({ onNavigate }: SessionListScreenProps) {
+export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScreenProps) {
   const renderer = useRenderer()
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -563,6 +571,7 @@ export function SessionListScreen({ onNavigate }: SessionListScreenProps) {
           session={selectedSession}
           onClose={() => setShowOverlay(false)}
           onNavigate={onNavigate}
+          onViewSummary={onViewSummary}
           setStatusMessage={setStatusMessage}
         />
       ) : null}

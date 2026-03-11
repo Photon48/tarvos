@@ -392,7 +392,7 @@ function RunFooter({ viewMode, statusMessage }: RunFooterProps) {
         <text fg={theme.warning}>{statusMessage}</text>
       ) : (
         <text fg={theme.muted}>
-          [↑/k] Scroll up  [↓/j] Scroll down  [v] {viewMode === "summary" ? "Raw" : "Summary"} view  [b] Background  [q] Back
+          [↑/k] Scroll up  [↓/j] Scroll down  [v] {viewMode === "summary" ? "Raw" : "Summary"} view  [s] Summary  [b] Background  [q] Back
         </text>
       )}
     </box>
@@ -404,9 +404,10 @@ function RunFooter({ viewMode, statusMessage }: RunFooterProps) {
 interface RunDashboardScreenProps {
   sessionName: string
   onBack: () => void
+  onViewSummary?: (sessionName: string) => void
 }
 
-export function RunDashboardScreen({ sessionName, onBack }: RunDashboardScreenProps) {
+export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDashboardScreenProps) {
   const renderer = useRenderer()
   const { height } = useTerminalDimensions()
   const [statusMessage, setStatusMessage] = useState("")
@@ -522,6 +523,10 @@ export function RunDashboardScreen({ sessionName, onBack }: RunDashboardScreenPr
     if (key.name === "r") {
       refreshSession()
       setStatusMessage("Refreshed")
+      return
+    }
+    if (key.name === "s" && onViewSummary) {
+      onViewSummary(sessionName)
       return
     }
   })
