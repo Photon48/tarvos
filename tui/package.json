@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.tsx",
-    "dev": "bun --watch run src/index.tsx"
+    "dev": "bun --watch run src/index.tsx",
+    "build:darwin-arm64": "bun build src/index.tsx --compile --target=bun-darwin-arm64 --outfile dist/tui-darwin-arm64 --minify",
+    "build:darwin-x64":   "bun build src/index.tsx --compile --target=bun-darwin-x64   --outfile dist/tui-darwin-x64   --minify",
+    "build:linux-x64":    "bun build src/index.tsx --compile --target=bun-linux-x64    --outfile dist/tui-linux-x64    --minify",
+    "build:linux-arm64":  "bun build src/index.tsx --compile --target=bun-linux-arm64  --outfile dist/tui-linux-arm64  --minify",
+    "build:all": "bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-x64 && bun run build:linux-arm64"
   },
   "dependencies": {
     "@opentui/core": "latest",
