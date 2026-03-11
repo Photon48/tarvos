@@ -1682,10 +1682,19 @@ run_agent_loop() {
                     # 1. Generate summary while worktree still exists
                     if [[ -n "$session_name" ]]; then
                         log_info "Generating completion summary..."
+                        local _gen_ts
+                        _gen_ts=$(date +%s)
+                        emit_tui_event "{\"type\":\"status\",\"content\":\"generating_summary\",\"ts\":${_gen_ts}}"
                         if generate_summary "$session_name" "$PRD_FILE" "${PROGRESS_FILE:-}" "$LOG_DIR" "${WORKTREE_PATH:-}"; then
                             log_success "Summary saved to .tarvos/sessions/${session_name}/summary.md"
+                            local _ready_ts
+                            _ready_ts=$(date +%s)
+                            emit_tui_event "{\"type\":\"status\",\"content\":\"summary_ready\",\"ts\":${_ready_ts}}"
                         else
                             log_warning "Summary generation failed (summary unavailable)"
+                            local _fail_ts
+                            _fail_ts=$(date +%s)
+                            emit_tui_event "{\"type\":\"status\",\"content\":\"summary_failed\",\"ts\":${_fail_ts}}"
                         fi
                     fi
                     # 2. Remove worktree AFTER summary so branch is freely accessible

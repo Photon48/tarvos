@@ -50,6 +50,10 @@ interface RunState {
   recentActions: ActionEntry[]
   scrollOffset: number  // 0 = bottom, positive = scrolled up
   viewMode: "summary" | "raw"
+  // Summary state
+  summaryGenerating: boolean
+  summaryReady: boolean
+  summaryFailed: boolean
 }
 
 type RunAction =
@@ -158,6 +162,21 @@ function reducer(state: RunState, action: RunAction): RunState {
         const rawStatus = (ev.content ?? "").toUpperCase()
         if (["IDLE","RUNNING","CONTEXT_LIMIT","CONTINUATION","RECOVERY","DONE","ERROR"].includes(rawStatus)) {
           newState.status = rawStatus as RunStatus
+        }
+        if (rawStatus === "GENERATING_SUMMARY") {
+          newState.summaryGenerating = true
+          newState.summaryReady = false
+          newState.summaryFailed = false
+        }
+        if (rawStatus === "SUMMARY_READY") {
+          newState.summaryGenerating = false
+          newState.summaryReady = true
+          newState.summaryFailed = false
+        }
+        if (rawStatus === "SUMMARY_FAILED") {
+          newState.summaryGenerating = false
+          newState.summaryReady = false
+          newState.summaryFailed = true
         }
       }
 
@@ -543,12 +562,26 @@ interface RunFooterProps {
   statusMessage: string
   statusIsError: boolean
   runStatus: RunStatus
+  summaryGenerating: boolean
+  summaryReady: boolean
+  summaryFailed: boolean
 }
 
-function RunFooter({ statusMessage, statusIsError, runStatus }: RunFooterProps) {
+function RunFooter({ statusMessage, statusIsError, runStatus, summaryGenerating, summaryReady, summaryFailed }: RunFooterProps) {
   const isRunning = runStatus === "RUNNING"
   const isStopped = (runStatus as string) === "STOPPED" || runStatus === "IDLE"
   const isDone = runStatus === "DONE"
+
+  let summaryHint: string | null = null
+  if (isDone) {
+    if (summaryGenerating) {
+      summaryHint = "  Generating summary…"
+    } else if (summaryFailed) {
+      summaryHint = "  Summary unavailable"
+    } else {
+      summaryHint = "  [s] View Summary"
+    }
+  }
 
   return (
     <box
@@ -561,7 +594,14 @@ function RunFooter({ statusMessage, statusIsError, runStatus }: RunFooterProps) 
       {statusMessage ? (
         <text fg={statusIsError ? theme.error : theme.success}>{statusMessage}</text>
       ) : isDone ? (
-        <text fg={theme.muted}>[a] Accept  [r] Reject  [q] Back</text>
+        <>
+          <text fg={theme.muted}>[a] Accept  [r] Reject  [q] Back</text>
+          {summaryHint && (
+            <text fg={summaryGenerating ? theme.warning : summaryFailed ? theme.error : theme.info}>
+              {summaryHint}
+            </text>
+          )}
+        </>
       ) : (
         <text fg={theme.muted}>
           [↑↓] Scroll  [v] Toggle raw  {isRunning ? "[s] Stop  " : ""}{isStopped ? "[c] Continue  " : ""}[q] Back
@@ -609,6 +649,9 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     recentActions: [],
     scrollOffset: 0,
     viewMode: "summary",
+    summaryGenerating: false,
+    summaryReady: false,
+    summaryFailed: false,
   })
 
   const sessionDir = getSessionDir(sessionName)
@@ -773,17 +816,33 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
       dispatch({ type: "RESET_SCROLL" })
       return
     }
-    if (key.name === "s" && runState.status === "RUNNING") {
-      setStatusMessage("Stopping session...", false)
-      runTarvosCommand(["stop", sessionName]).then(({ exitCode, stderr }) => {
-        if (exitCode === 0) {
-          setStatusMessage("✓ Session stopped", false)
-        } else {
-          const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
-          setStatusMessage(`✗ Stop failed${detail}`, true)
+    if (key.name === "s") {
+      if (runState.status === "RUNNING") {
+        setStatusMessage("Stopping session...", false)
+        runTarvosCommand(["stop", sessionName]).then(({ exitCode, stderr }) => {
+          if (exitCode === 0) {
+            setStatusMessage("✓ Session stopped", false)
+          } else {
+            const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+            setStatusMessage(`✗ Stop failed${detail}`, true)
+          }
+          refreshSession()
+        })
+        return
+      }
+      if (runState.status === "DONE") {
+        if (runState.summaryGenerating) {
+          // Summary still generating — do nothing, hint shown in footer
+          return
         }
-        refreshSession()
-      })
+        if (runState.summaryFailed) {
+          // Summary failed — [s] is hidden; do nothing
+          return
+        }
+        // summaryReady OR done without status (summary may exist from previous run)
+        onViewSummary?.(sessionName)
+        return
+      }
       return
     }
     if (key.name === "c" && (runState.status === "IDLE" || (runState.status as string) === "STOPPED")) {
@@ -859,6 +918,9 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
         statusMessage={statusMessage}
         statusIsError={statusIsError}
         runStatus={runState.status}
+        summaryGenerating={runState.summaryGenerating}
+        summaryReady={runState.summaryReady}
+        summaryFailed={runState.summaryFailed}
       />
     </box>
   )
