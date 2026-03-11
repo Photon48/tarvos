@@ -207,6 +207,26 @@ EOF
     exit 0
 }
 
+usage_forget() {
+    cat <<EOF
+Usage: tarvos forget <session-name> [--force]
+
+Detaches a session from Tarvos without deleting its git branch.
+
+The session's worktree is removed (if present) and its Tarvos metadata is
+archived. The git branch is left exactly as-is — you can check it out,
+merge it manually, open a PR, or delete it yourself.
+
+Use this when you want to handle the branch outside of Tarvos.
+
+Options:
+  --force    Skip confirmation prompt
+
+Status:    done, failed
+EOF
+    exit 0
+}
+
 usage_migrate() {
     cat <<EOF
 Usage: tarvos migrate
@@ -233,10 +253,12 @@ Commands:
   init <plan.md> --name <name>    Create a new session from a plan file
   begin <name>                    Start a session (runs in the background)
   continue <name>                 Resume a stopped session
+  attach <name>                   Tail a running session's live log output
   tui                             Open the session browser (same as just 'tarvos')
   stop <name>                     Stop a running session
   accept <name>                   Merge the session's changes into your branch
   reject <name> [--force]         Discard a session and all its changes
+  forget <name> [--force]         Remove from Tarvos; keep the git branch
   migrate                         Upgrade from an older Tarvos version
 
 Session status:
@@ -1160,13 +1182,34 @@ cmd_accept() {
     echo "Accepting session '${session_name}'..."
     echo "  Merging '${source_branch}' → '${target_branch}'"
 
-    # 3. Remove the worktree before merging (must be done before branch operations)
+    # 3. Pre-flight conflict check (before touching the worktree)
+    local _conflict_rc
+    branch_check_conflicts "$source_branch" "$target_branch"
+    _conflict_rc=$?
+    if [[ $_conflict_rc -eq 1 ]]; then
+        echo "" >&2
+        echo "tarvos: conflict detected — this plan's changes conflict with your current branch." >&2
+        echo "" >&2
+        echo "This can happen when another plan was accepted first and modified the same files." >&2
+        echo "Tarvos cannot auto-merge this safely. The session and branch are untouched." >&2
+        echo "" >&2
+        echo "To resolve manually:" >&2
+        echo "  git checkout ${target_branch}" >&2
+        echo "  git merge ${source_branch}" >&2
+        echo "Then fix the conflicts and run: git merge --continue" >&2
+        exit 1
+    elif [[ $_conflict_rc -eq 2 ]]; then
+        echo "tarvos: could not checkout target branch '${target_branch}' for conflict check." >&2
+        exit 1
+    fi
+
+    # 4. Remove the worktree before merging (must be done before branch operations)
     if worktree_exists "$session_name"; then
         echo "  Removing worktree..."
         worktree_remove "$session_name" || true
     fi
 
-    # 4. Attempt merge (branch_merge checks out target and merges source)
+    # 5. Attempt merge (branch_merge checks out target and merges source)
     local _merge_stderr_file
     _merge_stderr_file=$(mktemp)
     if ! branch_merge "$source_branch" "$target_branch" 2>"$_merge_stderr_file"; then
@@ -1186,11 +1229,11 @@ cmd_accept() {
 
     echo "  Merge successful."
 
-    # 5. Archive session folder
+    # 6. Archive session folder
     echo "  Archiving session..."
     session_archive "$session_name"
 
-    # 6. Delete session branch
+    # 7. Delete session branch
     echo "  Deleting branch '${source_branch}'..."
     branch_delete "$source_branch"
 
@@ -1288,6 +1331,95 @@ cmd_reject() {
 
     echo ""
     echo "Session '${session_name}' rejected and removed."
+}
+
+# ──────────────────────────────────────────────────────────────
+# tarvos forget — detach session without deleting its git branch
+# ──────────────────────────────────────────────────────────────
+cmd_forget() {
+    local session_name=""
+    local force=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_forget ;;
+            --force)   force=1; shift ;;
+            -*)
+                echo "tarvos forget: unknown option: $1" >&2
+                usage_forget
+                ;;
+            *)
+                if [[ -z "$session_name" ]]; then
+                    session_name="$1"
+                else
+                    echo "tarvos forget: unexpected argument: $1" >&2
+                    usage_forget
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$session_name" ]]; then
+        echo "tarvos forget: missing required argument <session-name>" >&2
+        usage_forget
+    fi
+
+    source "${SCRIPT_DIR}/lib/session-manager.sh"
+    source "${SCRIPT_DIR}/lib/worktree-manager.sh"
+
+    if ! session_exists "$session_name"; then
+        echo "tarvos forget: session '${session_name}' not found." >&2
+        exit 1
+    fi
+
+    session_load "$session_name" || exit 1
+
+    # Refuse if session is running
+    if [[ "$SESSION_STATUS" == "running" ]]; then
+        echo "tarvos forget: session '${session_name}' is currently running." >&2
+        echo "  Stop it first: tarvos stop ${session_name}" >&2
+        exit 1
+    fi
+
+    # Only allowed for done or failed
+    if [[ "$SESSION_STATUS" != "done" && "$SESSION_STATUS" != "failed" ]]; then
+        echo "tarvos forget: session '${session_name}' has status '${SESSION_STATUS}'." >&2
+        echo "  forget is only available for done or failed sessions." >&2
+        exit 1
+    fi
+
+    # Confirmation prompt unless --force
+    if (( ! force )); then
+        local branch_display="${SESSION_BRANCH:-<none>}"
+        echo "Forget session '${session_name}'?"
+        echo ""
+        echo "  This will remove the session from Tarvos. The git branch '${branch_display}' will"
+        echo "  NOT be deleted — it stays in your repo for you to handle manually."
+        echo "  Tarvos will no longer track this session."
+        echo ""
+        printf "  Type 'yes' to confirm: "
+        local confirm
+        IFS= read -r confirm
+        if [[ "$confirm" != "yes" ]]; then
+            echo "Forget cancelled."
+            exit 0
+        fi
+    fi
+
+    echo "Forgetting session '${session_name}'..."
+
+    # Remove the worktree if present
+    if worktree_exists "$session_name"; then
+        echo "  Removing worktree..."
+        worktree_remove "$session_name" || true
+    fi
+
+    # Archive metadata (branch is NOT deleted)
+    session_forget "$session_name"
+
+    echo ""
+    echo "Session forgotten. Branch '${SESSION_BRANCH}' is still in your repo."
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1782,6 +1914,7 @@ main() {
         tui)      cmd_tui "$@" ;;
         accept)   cmd_accept "$@" ;;
         reject)   cmd_reject "$@" ;;
+        forget)   cmd_forget "$@" ;;
         migrate)  cmd_migrate "$@" ;;
         -h|--help) usage_root ;;
         *)

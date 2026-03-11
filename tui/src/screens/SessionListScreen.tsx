@@ -9,17 +9,19 @@ import fs from "fs"
 
 // ─── Action definitions per status ────────────────────────────────────────────
 
-const ACTIONS: Record<string, Array<{ label: string; cmd: string[] }>> = {
+const ACTIONS: Record<string, Array<{ label: string; description?: string; cmd: string[] }>> = {
   running:     [{ label: "View",     cmd: ["view"] },                    // client-side navigation only
                 { label: "Stop",     cmd: ["stop"] }],                   // tarvos stop <name>
   stopped:     [{ label: "Continue", cmd: ["continue", "--detach"] },    // tarvos continue --detach <name>
                 { label: "Reject",   cmd: ["reject", "--force"] }],
   done:        [{ label: "Accept",       cmd: ["accept"] },
                 { label: "Reject",       cmd: ["reject", "--force"] },
+                { label: "Forget",       cmd: ["forget", "--force"], description: "Remove from Tarvos. Branch stays in your repo." },
                 { label: "View Summary", cmd: ["summary"] }],
   initialized: [{ label: "Start",    cmd: ["begin", "--detach"] },       // tarvos begin --detach <name>
                 { label: "Reject",   cmd: ["reject", "--force"] }],
-  failed:      [{ label: "Reject",   cmd: ["reject", "--force"] }],
+  failed:      [{ label: "Reject",   cmd: ["reject", "--force"] },
+                { label: "Forget",   cmd: ["forget", "--force"], description: "Remove from Tarvos. Branch stays in your repo." }],
 }
 
 // ─── Helper: format relative time ────────────────────────────────────────────
@@ -251,6 +253,52 @@ function RejectConfirmDialog({ sessionName, onConfirm, onCancel }: RejectConfirm
   )
 }
 
+// ─── Forget Confirmation Dialog ──────────────────────────────────────────────
+
+interface ForgetConfirmProps {
+  sessionName: string
+  branchName: string
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+function ForgetConfirmDialog({ sessionName, branchName, onConfirm, onCancel }: ForgetConfirmProps) {
+  useKeyboard((key) => {
+    if (key.name === "return") {
+      onConfirm()
+      return
+    }
+    if (key.name === "escape") {
+      onCancel()
+      return
+    }
+  })
+
+  return (
+    <box
+      position="absolute"
+      top={4}
+      left={4}
+      width={58}
+      flexDirection="column"
+      backgroundColor={theme.panelBg}
+      border
+      borderStyle="rounded"
+      borderColor={theme.warning}
+      title=" Confirm Forget "
+      titleAlignment="center"
+      padding={1}
+      gap={1}
+    >
+      <text fg={theme.normal}>Forget '{sessionName}'?</text>
+      <text fg={theme.muted}>Tarvos will stop tracking this session.</text>
+      <text fg={theme.subtle}>Branch '{branchName}' will remain in your repo.</text>
+      <text fg={theme.subtle}>You can check it out, merge it, or delete it manually.</text>
+      <text fg={theme.muted}>  [Enter] Confirm   [Esc] Cancel</text>
+    </box>
+  )
+}
+
 // ─── Action Overlay ───────────────────────────────────────────────────────────
 
 interface ActionOverlayProps {
@@ -283,6 +331,7 @@ function ActionOverlay({
   const [selectedAction, setSelectedAction] = useState(0)
   const [loading, setLoading] = useState(false)
   const [showRejectConfirm, setShowRejectConfirm] = useState(false)
+  const [showForgetConfirm, setShowForgetConfirm] = useState(false)
   const actions = ACTIONS[session.status] ?? []
   const isPending = pendingActions.has(session.name)
 
@@ -310,7 +359,31 @@ function ActionOverlay({
     }
   }, [session, onClose, setStatusMessage, onRejectSucceeded, onActionCompleted, onPendingStart, onPendingEnd])
 
-  const executeAction = useCallback(async (action: { label: string; cmd: string[] }) => {
+  const doForget = useCallback(async () => {
+    setShowForgetConfirm(false)
+    setLoading(true)
+    onPendingStart(session.name)
+    setStatusMessage(`Running: Forget...`)
+    try {
+      const { exitCode, stderr } = await runTarvosCommand(["forget", "--force", session.name])
+      if (exitCode === 0) {
+        setStatusMessage(`✓ Forgotten — branch '${session.branch}' stays in your repo`, false)
+        onRejectSucceeded()  // reuse: removes session from list
+        onActionCompleted()
+      } else {
+        const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+        setStatusMessage(`✗ Forget failed${detail}`, true)
+      }
+    } catch (e) {
+      setStatusMessage(`✗ Error: ${e}`, true)
+    } finally {
+      setLoading(false)
+      onPendingEnd(session.name)
+      onClose()
+    }
+  }, [session, onClose, setStatusMessage, onRejectSucceeded, onActionCompleted, onPendingStart, onPendingEnd])
+
+  const executeAction = useCallback(async (action: { label: string; description?: string; cmd: string[] }) => {
     // View navigates client-side
     if (action.cmd[0] === "view") {
       onNavigate(session.name)
@@ -326,6 +399,11 @@ function ActionOverlay({
     // Reject requires confirmation dialog
     if (action.cmd[0] === "reject") {
       setShowRejectConfirm(true)
+      return
+    }
+    // Forget requires confirmation dialog
+    if (action.cmd[0] === "forget") {
+      setShowForgetConfirm(true)
       return
     }
 
@@ -355,7 +433,7 @@ function ActionOverlay({
   }, [session, onClose, onNavigate, onViewSummary, setStatusMessage, onAcceptSucceeded, onActionCompleted, onPendingStart, onPendingEnd])
 
   useKeyboard((key) => {
-    if (showRejectConfirm) return  // Let RejectConfirmDialog handle keys
+    if (showRejectConfirm || showForgetConfirm) return  // Let confirm dialogs handle keys
     if (loading) return
     if (key.name === "escape") {
       onClose()
@@ -386,12 +464,23 @@ function ActionOverlay({
     )
   }
 
+  if (showForgetConfirm) {
+    return (
+      <ForgetConfirmDialog
+        sessionName={session.name}
+        branchName={session.branch}
+        onConfirm={doForget}
+        onCancel={() => setShowForgetConfirm(false)}
+      />
+    )
+  }
+
   return (
     <box
       position="absolute"
       top={4}
       left={4}
-      width={36}
+      width={42}
       flexDirection="column"
       backgroundColor={theme.panelBg}
       border
@@ -414,6 +503,9 @@ function ActionOverlay({
             >
               <text fg={i === selectedAction ? theme.normal : theme.subtle}>
                 {i === selectedAction ? "▶ " : "  "}{action.label}
+                {action.description && i === selectedAction
+                  ? <text fg={theme.muted}>{"  "}{action.description}</text>
+                  : null}
               </text>
             </box>
           ))}
@@ -582,6 +674,7 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
   const [statusMessage, setStatusMessageRaw] = useState("")
   const [statusIsError, setStatusIsError] = useState(false)
   const [showRejectConfirmQuick, setShowRejectConfirmQuick] = useState(false)
+  const [showForgetConfirmQuick, setShowForgetConfirmQuick] = useState(false)
   const [loading, setLoading] = useState(true)
   // 2.2 Pending actions guard: track sessions with in-flight actions
   const [pendingActions, setPendingActions] = useState<Set<string>>(new Set())
@@ -674,12 +767,28 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
     }
   }, [sessions, selectedIndex, refresh, setStatusMessage, handlePendingStart, handlePendingEnd])
 
+  const handleForgetQuick = useCallback(async () => {
+    const session = sessions[selectedIndex]
+    if (!session) return
+    setShowForgetConfirmQuick(false)
+    handlePendingStart(session.name)
+    const { exitCode, stderr } = await runTarvosCommand(["forget", "--force", session.name])
+    handlePendingEnd(session.name)
+    if (exitCode === 0) {
+      setStatusMessage(`✓ Forgotten ${session.name} — branch stays in your repo`, false)
+      refresh()
+    } else {
+      const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+      setStatusMessage(`✗ Forget failed${detail}`, true)
+    }
+  }, [sessions, selectedIndex, refresh, setStatusMessage, handlePendingStart, handlePendingEnd])
+
   // Keyboard handler — only when no overlay is open
   useKeyboard((key) => {
     if (showOverlay || showNewForm) return
 
-    // Let reject confirm dialog handle keys when open
-    if (showRejectConfirmQuick) return
+    // Let confirm dialogs handle keys when open
+    if (showRejectConfirmQuick || showForgetConfirmQuick) return
 
     if (key.name === "q" || (key.ctrl && key.name === "c")) {
       renderer.destroy()
@@ -746,6 +855,10 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
       setShowRejectConfirmQuick(true)
       return
     }
+    if (key.name === "f" && (session.status === "done" || session.status === "failed")) {
+      setShowForgetConfirmQuick(true)
+      return
+    }
   })
 
   const selectedSession = sessions[selectedIndex]
@@ -798,6 +911,16 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
           sessionName={selectedSession.name}
           onConfirm={handleRejectQuick}
           onCancel={() => setShowRejectConfirmQuick(false)}
+        />
+      ) : null}
+
+      {/* Quick forget confirmation */}
+      {showForgetConfirmQuick && selectedSession ? (
+        <ForgetConfirmDialog
+          sessionName={selectedSession.name}
+          branchName={selectedSession.branch}
+          onConfirm={handleForgetQuick}
+          onCancel={() => setShowForgetConfirmQuick(false)}
         />
       ) : null}
     </box>

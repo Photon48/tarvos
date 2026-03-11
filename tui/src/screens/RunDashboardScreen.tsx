@@ -571,6 +571,7 @@ function RunFooter({ statusMessage, statusIsError, runStatus, summaryGenerating,
   const isRunning = runStatus === "RUNNING"
   const isStopped = (runStatus as string) === "STOPPED" || runStatus === "IDLE"
   const isDone = runStatus === "DONE"
+  const isFailed = runStatus === "ERROR"
 
   let summaryHint: string | null = null
   if (isDone) {
@@ -595,13 +596,15 @@ function RunFooter({ statusMessage, statusIsError, runStatus, summaryGenerating,
         <text fg={statusIsError ? theme.error : theme.success}>{statusMessage}</text>
       ) : isDone ? (
         <>
-          <text fg={theme.muted}>[a] Accept  [r] Reject  [q] Back</text>
+          <text fg={theme.muted}>[a] Accept  [r] Reject  [f] Forget  [q] Back</text>
           {summaryHint && (
             <text fg={summaryGenerating ? theme.warning : summaryFailed ? theme.error : theme.info}>
               {summaryHint}
             </text>
           )}
         </>
+      ) : isFailed ? (
+        <text fg={theme.muted}>[r] Reject  [f] Forget  [q] Back</text>
       ) : (
         <text fg={theme.muted}>
           [↑↓] Scroll  [v] Toggle raw  {isRunning ? "[s] Stop  " : ""}{isStopped ? "[c] Continue  " : ""}[q] Back
@@ -628,6 +631,8 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
   const startTimeRef = useRef(Date.now())
   const [rejectPending, setRejectPending] = useState(false)
   const rejectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [forgetPending, setForgetPending] = useState(false)
+  const forgetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setStatusMessage = (msg: string, isError?: boolean) => {
     setStatusMessageRaw(msg)
@@ -783,10 +788,11 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     return () => clearTimeout(id)
   }, [statusMessage])
 
-  // Cleanup reject timeout on unmount
+  // Cleanup reject/forget timeouts on unmount
   useEffect(() => {
     return () => {
       if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current)
+      if (forgetTimeoutRef.current) clearTimeout(forgetTimeoutRef.current)
     }
   }, [])
 
@@ -894,6 +900,33 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
         setStatusMessage("Press [r] again to confirm rejection", false)
         rejectTimeoutRef.current = setTimeout(() => {
           setRejectPending(false)
+          setStatusMessageRaw("")
+        }, 3000)
+      }
+      return
+    }
+    // Forget keybind — double-press confirm, only when DONE or ERROR/FAILED
+    if (key.name === "f" && (runState.status === "DONE" || runState.status === "ERROR")) {
+      if (forgetPending) {
+        // Second press: execute forget
+        if (forgetTimeoutRef.current) clearTimeout(forgetTimeoutRef.current)
+        setForgetPending(false)
+        setStatusMessage("Forgetting session...", false)
+        runTarvosCommand(["forget", "--force", sessionName]).then(({ exitCode, stderr }) => {
+          if (exitCode === 0) {
+            setStatusMessage(`✓ Forgotten — branch stays in your repo`, false)
+            setTimeout(() => onBack(), 1500)
+          } else {
+            const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+            setStatusMessage(`✗ Forget failed${detail}`, true)
+          }
+        })
+      } else {
+        // First press: arm confirm
+        setForgetPending(true)
+        setStatusMessage("Press [f] again to confirm forget (branch will be kept)", false)
+        forgetTimeoutRef.current = setTimeout(() => {
+          setForgetPending(false)
           setStatusMessageRaw("")
         }, 3000)
       }

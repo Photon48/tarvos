@@ -147,6 +147,32 @@ branch_merge() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# branch_check_conflicts
+# Dry-run merge to check for conflicts without modifying the tree.
+# Args: $1 = source_branch, $2 = target_branch
+# Returns:
+#   0 — no conflicts
+#   1 — conflicts would occur
+#   2 — could not checkout target branch
+# ──────────────────────────────────────────────────────────────
+branch_check_conflicts() {
+    local source="$1"
+    local target="$2"
+
+    if ! git checkout "$target" 2>/dev/null; then
+        return 2
+    fi
+
+    if git merge --no-commit --no-ff "$source" 2>/dev/null; then
+        git merge --abort 2>/dev/null || true
+        return 0   # no conflicts
+    else
+        git merge --abort 2>/dev/null || true
+        return 1   # conflicts exist
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────
 # branch_delete
 # Delete a local branch (force delete).
 # Args: $1 = branch name

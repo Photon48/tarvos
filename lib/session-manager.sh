@@ -308,6 +308,40 @@ session_archive() {
     registry_remove "$name"
 }
 
+# Forget a session — archive metadata, leave git branch intact.
+# Archives session to .tarvos/archive/<name>-<ts>/ with status "forgotten".
+# Does NOT delete the git branch.
+# Args: $1 = name
+session_forget() {
+    local name="$1"
+    local session_folder
+    session_folder=$(session_dir "$name")
+
+    if [[ ! -d "$session_folder" ]]; then
+        return 0
+    fi
+
+    local timestamp
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    local archive_dest="${ARCHIVE_DIR}/${name}-${timestamp}"
+
+    mkdir -p "$ARCHIVE_DIR"
+
+    # Write "forgotten" status into state.json before archiving
+    local state_file
+    state_file=$(session_state_file "$name")
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local tmp
+    tmp=$(mktemp)
+    jq --arg now "$now" \
+        '.status = "forgotten" | .last_activity = $now' \
+        "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+
+    mv "$session_folder" "$archive_dest"
+    registry_remove "$name"
+}
+
 # Update loop count in state
 # Args: $1 = name, $2 = loop_count
 session_set_loop_count() {
