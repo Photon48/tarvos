@@ -1,20 +1,20 @@
 # Progress Report
 
 ## Current Status
-Phase 5 of 7: Update lib/session-manager.sh and lib/context-monitor.sh
+Phase 6 of 7: Add `tarvos update` command
 Status: COMPLETED
 
 ## What Was Done This Session
-- lib/session-manager.sh: Replaced all 28 bare `jq` calls with `"$TARVOS_JQ"`
-- lib/context-monitor.sh: Replaced all 17 bare `jq` calls with `"$TARVOS_JQ"`
-- tests/smoke-test.sh: Updated 6 real `jq` calls to `${TARVOS_JQ:-jq}`; mock stubs untouched
+- tarvos.sh: Added `usage_update()` with --version, --force, -h flags documented
+- tarvos.sh: Added `cmd_update()` — fetches latest tag from GitHub API (or uses --version), downloads fresh TUI binary + tarvos tarball, skips jq unless --force, updates Claude skill
+- tarvos.sh: Wired `update` into case dispatch in `main()` and listed in `usage_root()`
 - All 19 smoke tests pass
 
 ## Immediate Next Task
-Begin Phase 6: Add `cmd_update()` function to tarvos.sh. Fetches latest release tag (or accepts --version), downloads fresh TUI binary and tarvos.sh tarball, skips jq re-download unless --force. Add `update` to the case dispatch and --help.
+Begin Phase 7: Update README.md — change prerequisites to just `claude` CLI, update quickstart to curl install, add Development section with bun rebuild instructions.
 
 ## Key Files for Next Task
-- tarvos.sh (add cmd_update function and wire into dispatch + help)
+- README.md
 
 ## Gotchas
 - None

@@ -264,6 +264,26 @@ EOF
     exit 0
 }
 
+usage_update() {
+    cat <<EOF
+Usage: tarvos update [--version <tag>] [--force]
+
+Download and install a new version of Tarvos.
+
+Options:
+  --version <tag>   Install a specific release tag (e.g. v0.2.0).
+                    If omitted, fetches the latest tag from GitHub.
+  --force           Re-download jq even if it is already installed.
+  -h, --help        Show this help message.
+
+Examples:
+  tarvos update                    # Update to the latest release
+  tarvos update --version v0.2.0   # Install a specific version
+  tarvos update --force            # Force re-download of all binaries
+EOF
+    exit 0
+}
+
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
@@ -283,6 +303,7 @@ Commands:
   reject <name> [--force]         Discard a session and all its changes
   forget <name> [--force]         Remove from Tarvos; keep the git branch
   migrate                         Upgrade from an older Tarvos version
+  update [--version <tag>]        Update Tarvos to a newer release
 
 Session status:
   initialized   Ready to start
@@ -1544,6 +1565,137 @@ cmd_migrate() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# tarvos update — download and install a new Tarvos release
+# ──────────────────────────────────────────────────────────────
+cmd_update() {
+    local REQUESTED_VERSION=""
+    local FORCE=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_update ;;
+            --version)
+                if [[ -z "${2:-}" ]]; then
+                    echo "tarvos update: --version requires a value" >&2
+                    usage_update
+                fi
+                REQUESTED_VERSION="$2"
+                shift 2
+                ;;
+            --version=*)
+                REQUESTED_VERSION="${1#--version=}"
+                shift
+                ;;
+            --force)
+                FORCE=true
+                shift
+                ;;
+            *)
+                echo "tarvos update: unexpected argument: $1" >&2
+                usage_update
+                ;;
+        esac
+    done
+
+    local BOLD='\033[1m' RESET='\033[0m' GREEN='\033[0;32m' YELLOW='\033[1;33m' DIM='\033[2m'
+
+    # ── Determine target version ──────────────────────────────────────────────
+    local TARGET_VERSION="$REQUESTED_VERSION"
+    if [[ -z "$TARGET_VERSION" ]]; then
+        echo -e "${DIM}Fetching latest Tarvos release from GitHub...${RESET}"
+        if ! command -v curl &>/dev/null; then
+            echo "Error: curl is required to update Tarvos." >&2
+            exit 1
+        fi
+        local LATEST
+        LATEST="$(curl -fsSL "https://api.github.com/repos/anomalyco/tarvos/releases/latest" \
+            | "$TARVOS_JQ" -r '.tag_name' 2>/dev/null || true)"
+        if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
+            echo "Error: Could not determine the latest Tarvos release." >&2
+            echo "Check your internet connection or specify a version with --version." >&2
+            exit 1
+        fi
+        TARGET_VERSION="$LATEST"
+    fi
+
+    echo -e "Updating Tarvos to ${BOLD}${TARGET_VERSION}${RESET}..."
+
+    # ── Platform detection ─────────────────────────────────────────────────────
+    local OS ARCH TUI_PLATFORM JQ_PLATFORM
+    OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    ARCH="$(uname -m)"
+    case "$OS/$ARCH" in
+        darwin/arm64)   TUI_PLATFORM="darwin-arm64"; JQ_PLATFORM="macos-arm64"  ;;
+        darwin/x86_64)  TUI_PLATFORM="darwin-x64";   JQ_PLATFORM="macos-amd64"  ;;
+        linux/x86_64)   TUI_PLATFORM="linux-x64";    JQ_PLATFORM="linux-amd64"  ;;
+        linux/aarch64)  TUI_PLATFORM="linux-arm64";  JQ_PLATFORM="linux-arm64"  ;;
+        *)
+            echo "Error: Unsupported platform: $OS/$ARCH" >&2
+            exit 1
+            ;;
+    esac
+
+    local TARVOS_BIN_DIR="${TARVOS_DATA_DIR}/bin"
+    mkdir -p "$TARVOS_BIN_DIR"
+    local GITHUB_RELEASES="https://github.com/anomalyco/tarvos/releases/download/${TARGET_VERSION}"
+
+    # ── Re-download jq only when --force or not present ───────────────────────
+    local JQ_BIN="${TARVOS_BIN_DIR}/jq"
+    if [[ "$FORCE" == true || ! -x "$JQ_BIN" ]]; then
+        # Read the jq version from the installed VERSION file if available,
+        # otherwise use a built-in fallback.
+        local JQ_VERSION="jq-1.8.1"
+        if [[ -f "${TARVOS_DATA_DIR}/VERSION" ]]; then
+            local stored_jq
+            stored_jq="$(grep '^JQ_VERSION=' "${TARVOS_DATA_DIR}/VERSION" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+            [[ -n "$stored_jq" ]] && JQ_VERSION="$stored_jq"
+        fi
+        echo -e "  Downloading ${DIM}jq (${JQ_VERSION})${RESET}..."
+        curl -fsSL "https://github.com/jqlang/jq/releases/download/${JQ_VERSION}/jq-${JQ_PLATFORM}" \
+            -o "$JQ_BIN"
+        chmod +x "$JQ_BIN"
+        if [[ "$OS" == "darwin" ]]; then
+            xattr -dr com.apple.quarantine "$JQ_BIN" 2>/dev/null || true
+        fi
+        echo -e "  ${GREEN}jq updated.${RESET}"
+    else
+        echo -e "  ${DIM}jq already installed — skipping (use --force to re-download).${RESET}"
+    fi
+
+    # ── Download fresh TUI binary ─────────────────────────────────────────────
+    local TUI_BIN="${TARVOS_BIN_DIR}/tui"
+    echo -e "  Downloading ${DIM}TUI binary (tui-${TUI_PLATFORM})${RESET}..."
+    curl -fsSL "${GITHUB_RELEASES}/tui-${TUI_PLATFORM}" -o "$TUI_BIN"
+    chmod +x "$TUI_BIN"
+    if [[ "$OS" == "darwin" ]]; then
+        xattr -dr com.apple.quarantine "$TUI_BIN" 2>/dev/null || true
+    fi
+    echo -e "  ${GREEN}TUI binary updated.${RESET}"
+
+    # ── Download and extract new tarvos.sh + lib/ ─────────────────────────────
+    local TARBALL_NAME="tarvos-${TARGET_VERSION}.tar.gz"
+    echo -e "  Downloading ${DIM}${TARBALL_NAME}${RESET}..."
+    local TARBALL_TMP
+    TARBALL_TMP="$(mktemp /tmp/tarvos-XXXXXX.tar.gz)"
+    curl -fsSL "${GITHUB_RELEASES}/${TARBALL_NAME}" -o "$TARBALL_TMP"
+    tar -xzf "$TARBALL_TMP" -C "$TARVOS_DATA_DIR" --strip-components=1
+    rm -f "$TARBALL_TMP"
+    chmod +x "${TARVOS_DATA_DIR}/tarvos.sh"
+    echo -e "  ${GREEN}tarvos.sh + lib/ updated.${RESET}"
+
+    # ── Update Claude skill ───────────────────────────────────────────────────
+    local SKILLS_DIR="${HOME}/.claude/skills/tarvos-skill"
+    mkdir -p "$SKILLS_DIR"
+    if [[ -f "${TARVOS_DATA_DIR}/tarvos-skill/SKILL.md" ]]; then
+        cp "${TARVOS_DATA_DIR}/tarvos-skill/SKILL.md" "${SKILLS_DIR}/SKILL.md"
+        echo -e "  ${GREEN}Claude skill updated.${RESET}"
+    fi
+
+    echo ""
+    echo -e "${GREEN}${BOLD}Tarvos ${TARGET_VERSION} installed successfully!${RESET}"
+}
+
+# ──────────────────────────────────────────────────────────────
 # Clean shutdown: kill claude, restore terminal, exit
 # CURRENT_SESSION_NAME is set by cmd_begin before run_agent_loop
 # ──────────────────────────────────────────────────────────────
@@ -1935,6 +2087,7 @@ main() {
         reject)   cmd_reject "$@" ;;
         forget)   cmd_forget "$@" ;;
         migrate)  cmd_migrate "$@" ;;
+        update)   cmd_update "$@" ;;
         -h|--help) usage_root ;;
         *)
             echo "tarvos: unknown command: ${cmd}" >&2
