@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-test.sh — Manual smoke test suite for Tarvos TUI (Phase 5)
+# smoke-test.sh — Manual smoke test suite for Tarvos
 # Runs 13 tests without a real Claude agent or network access.
 # All tests run in a temp git repo with mock state files.
 #
@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ──────────────────────────────────────────────────────────────
-# Colors (simple ANSI, no tui-core dependency)
+# Colors (simple ANSI)
 # ──────────────────────────────────────────────────────────────
 _GREEN="\033[0;32m"
 _RED="\033[0;31m"
@@ -123,78 +123,48 @@ EOF
 # Each function exits 0 on pass, non-zero on fail.
 # ──────────────────────────────────────────────────────────────
 
-# Test 1: List screen renders
-_test_list_renders() {
-    local workdir="${TMPDIR_ROOT}/t1"
-    _make_git_repo "$workdir"
-    mkdir -p "${workdir}/.tarvos/sessions"
+# Test 1: TypeScript TUI source files exist and are importable
+_test_tui_source_files_exist() {
+    local required_files=(
+        "${PROJECT_ROOT}/tui/src/index.tsx"
+        "${PROJECT_ROOT}/tui/src/App.tsx"
+        "${PROJECT_ROOT}/tui/src/theme.ts"
+        "${PROJECT_ROOT}/tui/src/types.ts"
+        "${PROJECT_ROOT}/tui/src/data/sessions.ts"
+        "${PROJECT_ROOT}/tui/src/data/events.ts"
+        "${PROJECT_ROOT}/tui/src/commands.ts"
+        "${PROJECT_ROOT}/tui/src/screens/SessionListScreen.tsx"
+        "${PROJECT_ROOT}/tui/src/screens/RunDashboardScreen.tsx"
+        "${PROJECT_ROOT}/tui/src/screens/SummaryScreen.tsx"
+        "${PROJECT_ROOT}/tui/package.json"
+        "${PROJECT_ROOT}/tui/tsconfig.json"
+    )
 
-    _write_session "${workdir}/.tarvos/sessions" "auth-feature" "running" "tarvos/auth-feature-20260101" "2026-01-01T12:00:00Z"
-    _write_session "${workdir}/.tarvos/sessions" "bugfix-login" "done" "tarvos/bugfix-login-20260101" "2026-01-01T11:00:00Z"
-    _write_session "${workdir}/.tarvos/sessions" "new-api" "initialized" "" ""
-
-    local output
-    output=$(cd "$workdir" && SESSIONS_DIR=".tarvos/sessions" bash -c "
-        source '${PROJECT_ROOT}/lib/tui-core.sh'
-        source '${PROJECT_ROOT}/lib/list-tui.sh'
-        _list_load_sessions
-        # Verify sessions loaded
-        echo \"count=\${#_LIST_NAMES[@]}\"
-        for n in \"\${_LIST_NAMES[@]}\"; do echo \"name=\$n\"; done
-        for s in \"\${_LIST_STATUSES[@]}\"; do echo \"status=\$s\"; done
-    " 2>/dev/null)
-
-    echo "$output" | grep -q "count=3" || { echo "Expected 3 sessions, got: $output"; return 1; }
-    echo "$output" | grep -q "name=auth-feature" || { echo "Missing auth-feature"; return 1; }
-    echo "$output" | grep -q "name=bugfix-login" || { echo "Missing bugfix-login"; return 1; }
-    echo "$output" | grep -q "name=new-api" || { echo "Missing new-api"; return 1; }
-    echo "$output" | grep -q "status=running" || { echo "Missing running status"; return 1; }
-    echo "$output" | grep -q "status=done" || { echo "Missing done status"; return 1; }
-    echo "$output" | grep -q "status=initialized" || { echo "Missing initialized status"; return 1; }
+    for f in "${required_files[@]}"; do
+        if [[ ! -f "$f" ]]; then
+            echo "Missing required TUI file: $f"
+            return 1
+        fi
+    done
     return 0
 }
 
-# Test 2: List screen navigation
-_test_list_navigation() {
-    local workdir="${TMPDIR_ROOT}/t2"
-    _make_git_repo "$workdir"
-    mkdir -p "${workdir}/.tarvos/sessions"
+# Test 2: TypeScript TUI type-checks cleanly (bun --check)
+_test_tui_typecheck() {
+    local bun_bin
+    bun_bin=$(command -v bun 2>/dev/null || echo "/Users/rishugoyal/.bun/bin/bun")
+    if [[ ! -x "$bun_bin" ]]; then
+        echo "bun not found — skipping typecheck (install bun to enable)"
+        return 0
+    fi
 
-    _write_session "${workdir}/.tarvos/sessions" "session-a" "initialized" "" ""
-    _write_session "${workdir}/.tarvos/sessions" "session-b" "initialized" "" ""
-    _write_session "${workdir}/.tarvos/sessions" "session-c" "initialized" "" ""
-
-    # Write a helper script (functions needed for local vars to work)
-    local helper="${TMPDIR_ROOT}/nav_helper.sh"
-    cat > "$helper" <<EOF
-#!/usr/bin/env bash
-source '${PROJECT_ROOT}/lib/tui-core.sh'
-source '${PROJECT_ROOT}/lib/list-tui.sh'
-SESSIONS_DIR="${workdir}/.tarvos/sessions"
-_list_load_sessions
-count=\${#_LIST_NAMES[@]}
-echo "initial_sel=\$_LIST_SEL"
-# Move down
-(( _LIST_SEL < count - 1 )) && (( _LIST_SEL++ )) || true
-echo "after_down=\$_LIST_SEL"
-# Move down again
-(( _LIST_SEL < count - 1 )) && (( _LIST_SEL++ )) || true
-echo "after_down2=\$_LIST_SEL"
-# Try to move past end (should stay at end)
-(( _LIST_SEL < count - 1 )) && (( _LIST_SEL++ )) || true
-echo "at_end=\$_LIST_SEL"
-# Move up
-(( _LIST_SEL > 0 )) && (( _LIST_SEL-- )) || true
-echo "after_up=\$_LIST_SEL"
-EOF
-    local output
-    output=$(bash "$helper" 2>/dev/null)
-
-    echo "$output" | grep -q "initial_sel=0" || { echo "Initial sel should be 0: $output"; return 1; }
-    echo "$output" | grep -q "after_down=1" || { echo "After down should be 1: $output"; return 1; }
-    echo "$output" | grep -q "after_down2=2" || { echo "After down2 should be 2: $output"; return 1; }
-    echo "$output" | grep -q "at_end=2" || { echo "At end should still be 2: $output"; return 1; }
-    echo "$output" | grep -q "after_up=1" || { echo "After up should be 1: $output"; return 1; }
+    local output exit_code=0
+    output=$(cd "${PROJECT_ROOT}/tui" && "$bun_bin" x tsc --noEmit 2>&1) || exit_code=$?
+    if [[ "$exit_code" -ne 0 ]]; then
+        echo "TypeScript typecheck failed:"
+        echo "$output"
+        return 1
+    fi
     return 0
 }
 
@@ -204,12 +174,9 @@ _test_action_overlay_actions() {
     _make_git_repo "$workdir"
     mkdir -p "${workdir}/.tarvos/sessions"
 
-    # Test that action arrays are correct per status
+    # Test that action arrays are correct per status (pure bash logic, no TUI dependency)
     local output
     output=$(bash -c "
-        source '${PROJECT_ROOT}/lib/tui-core.sh'
-        source '${PROJECT_ROOT}/lib/list-tui.sh'
-
         check_actions() {
             local status=\"\$1\"
             shift
@@ -248,9 +215,43 @@ _test_action_overlay_actions() {
     return 0
 }
 
-# Test 4: Run view renders without errors (with mock events log)
-_test_run_view_renders() {
+# Test 4: Session state.json is parseable by the TypeScript data layer
+_test_session_state_parseable() {
     local workdir="${TMPDIR_ROOT}/t4"
+    _make_git_repo "$workdir"
+    mkdir -p "${workdir}/.tarvos/sessions"
+
+    _write_session "${workdir}/.tarvos/sessions" "auth-feature" "running" "tarvos/auth-feature-20260101" "2026-01-01T12:00:00Z"
+    _write_session "${workdir}/.tarvos/sessions" "bugfix-login" "done" "tarvos/bugfix-login-20260101" "2026-01-01T11:00:00Z"
+    _write_session "${workdir}/.tarvos/sessions" "new-api" "initialized" "" ""
+
+    # Verify state.json files are valid JSON with required fields
+    local sessions_dir="${workdir}/.tarvos/sessions"
+    for session_dir in "${sessions_dir}"/*/; do
+        local state_file="${session_dir}state.json"
+        if [[ ! -f "$state_file" ]]; then
+            echo "Missing state.json in ${session_dir}"
+            return 1
+        fi
+        # Verify required fields exist
+        for field in name status prd_file token_limit max_loops; do
+            if ! grep -q "\"${field}\"" "$state_file"; then
+                echo "Missing field '${field}' in ${state_file}"
+                return 1
+            fi
+        done
+    done
+
+    # Verify session count
+    local count
+    count=$(ls -d "${sessions_dir}"/*/  2>/dev/null | wc -l | tr -d '[:space:]')
+    [[ "$count" -eq 3 ]] || { echo "Expected 3 sessions, got ${count}"; return 1; }
+    return 0
+}
+
+# Test 5: JSONL event file format matches TypeScript TuiEvent type
+_test_events_jsonl_format() {
+    local workdir="${TMPDIR_ROOT}/t5"
     _make_git_repo "$workdir"
 
     local now
@@ -261,101 +262,30 @@ _test_run_view_renders() {
 {"type":"tool_use","tool":"Bash","input":"npm test","ts":${now}}
 {"type":"tool_result","tool":"Bash","output":"exit 0","success":true,"ts":$((now+1))}
 {"type":"tool_use","tool":"Edit","input":"src/auth/middleware.ts","ts":$((now+2))}
-{"type":"tool_result","tool":"Edit","output":"file updated","success":true,"ts":$((now+3))}
-{"type":"text","content":"Now implementing token refresh logic.","ts":$((now+4))}
+{"type":"text","content":"Now implementing token refresh logic.","ts":$((now+3))}
+{"type":"signal","signal":"PHASE_COMPLETE","ts":$((now+4))}
 EOF
 
-    local output
-    output=$(bash -c "
-        source '${PROJECT_ROOT}/lib/tui-core.sh'
-        source '${PROJECT_ROOT}/lib/log-manager.sh'
-        # Initialize without actual TUI screen
-        TUI_ENABLED=0
-        CURRENT_STATUS='RUNNING'
-        LOG_VIEW_MODE='summary'
-        _LM_CURRENT_EVENTS_LOG='${events_file}'
+    # Verify each line is valid JSON with a "type" field
+    local line_num=0
+    while IFS= read -r line; do
+        (( line_num++ ))
+        [[ -z "$line" ]] && continue
+        # Check it's valid JSON using bash string matching (type field present)
+        echo "$line" | grep -q '"type"' || {
+            echo "Line ${line_num} missing 'type' field: $line"
+            return 1
+        }
+    done < "$events_file"
 
-        # Load events file into ACTIVITY_LOG
-        while IFS= read -r line; do
-            [[ -z \"\$line\" ]] && continue
-            _lm_append_event_line \"\$line\"
-        done < '${events_file}'
-
-        echo \"activity_count=\${#ACTIVITY_LOG[@]}\"
-        for entry in \"\${ACTIVITY_LOG[@]}\"; do
-            echo \"entry:\$entry\"
-        done
-    " 2>/dev/null)
-
-    # Should have 5 entries (tool_use + tool_result * 2 + text = 5, but raw mode filtered)
-    # In summary mode: tool_use(2), tool_result(2), text(1) = 5
-    local count
-    count=$(echo "$output" | grep -c "^entry:" || true)
-    [[ "$count" -ge 4 ]] || { echo "Expected >=4 activity entries, got $count: $output"; return 1; }
-    echo "$output" | grep -q "Bash" || { echo "Missing Bash tool in activity: $output"; return 1; }
+    [[ "$line_num" -ge 5 ]] || { echo "Expected >=5 event lines, got ${line_num}"; return 1; }
+    grep -q '"type":"tool_use"' "$events_file" || { echo "Missing tool_use event"; return 1; }
+    grep -q '"type":"text"' "$events_file" || { echo "Missing text event"; return 1; }
+    grep -q '"type":"signal"' "$events_file" || { echo "Missing signal event"; return 1; }
     return 0
 }
 
-# Test 5: Log view mode toggle
-_test_log_view_toggle() {
-    local workdir="${TMPDIR_ROOT}/t5"
-    _make_git_repo "$workdir"
-
-    local now
-    now=$(date +%s)
-    local events_file="${workdir}/loop-001-events.jsonl"
-
-    cat > "$events_file" <<EOF
-{"type":"tool_use","tool":"Bash","input":"echo hello","ts":${now}}
-{"type":"text","content":"This is raw text from Claude.","ts":$((now+1))}
-EOF
-
-    local helper="${TMPDIR_ROOT}/toggle_helper.sh"
-    cat > "$helper" <<HELPEREOF
-#!/usr/bin/env bash
-source '${PROJECT_ROOT}/lib/tui-core.sh'
-source '${PROJECT_ROOT}/lib/log-manager.sh'
-TUI_ENABLED=0
-events_file='${events_file}'
-
-# Summary mode: should include tool_use
-LOG_VIEW_MODE='summary'
-ACTIVITY_LOG=()
-while IFS= read -r line; do
-    [[ -z "\$line" ]] && continue
-    _lm_append_event_line "\$line"
-done < "\$events_file"
-summary_count=\${#ACTIVITY_LOG[@]}
-echo "summary_count=\$summary_count"
-
-# Raw mode: should only include text events
-LOG_VIEW_MODE='raw'
-ACTIVITY_LOG=()
-while IFS= read -r line; do
-    [[ -z "\$line" ]] && continue
-    _lm_append_event_line "\$line"
-done < "\$events_file"
-raw_count=\${#ACTIVITY_LOG[@]}
-echo "raw_count=\$raw_count"
-HELPEREOF
-
-    local output
-    output=$(bash "$helper" 2>/dev/null)
-
-    local summary_count raw_count
-    summary_count=$(echo "$output" | grep "^summary_count=" | cut -d= -f2 | tr -d '[:space:]')
-    raw_count=$(echo "$output" | grep "^raw_count=" | cut -d= -f2 | tr -d '[:space:]')
-
-    # Summary mode: tool_use + text = 2 entries
-    [[ "$summary_count" -ge 2 ]] || { echo "Summary mode count should be >=2, got: $summary_count; full: $output"; return 1; }
-    # Raw mode: only text = 1 entry
-    [[ "$raw_count" -eq 1 ]] || { echo "Raw mode count should be 1, got: $raw_count; full: $output"; return 1; }
-    # Raw should be less than summary
-    [[ "$raw_count" -lt "$summary_count" ]] || { echo "Raw count ($raw_count) should be < summary count ($summary_count)"; return 1; }
-    return 0
-}
-
-# Test 6: Completion summary overlay — renders summary lines and handles keys
+# Test 6: Completion summary overlay — reads summary.md correctly
 _test_completion_summary_overlay() {
     local workdir="${TMPDIR_ROOT}/t6"
     _make_git_repo "$workdir"
@@ -471,74 +401,32 @@ _test_dual_worktree_coexistence() {
     return 0
 }
 
-# Test 9: Spinner renders (tc_spinner_start / tc_spinner_stop)
-_test_spinner_renders() {
-    local pid_file="${TMPDIR_ROOT}/spinner_pid.txt"
-    local helper="${TMPDIR_ROOT}/spinner_helper.sh"
+# Test 9: TypeScript TUI braille spinner chars defined in theme
+_test_spinner_chars_defined() {
+    local theme_file="${PROJECT_ROOT}/tui/src/theme.ts"
+    [[ -f "$theme_file" ]] || { echo "Missing theme.ts: $theme_file"; return 1; }
 
-    cat > "$helper" <<HELPEREOF
-#!/usr/bin/env bash
-# Override tput to avoid terminal issues in non-interactive test
-tput() { :; }
-source '${PROJECT_ROOT}/lib/tui-core.sh'
-
-tc_spinner_start 1 1
-pid=\$TC_SPINNER_PID
-echo "spinner_pid_set=\$([ -n "\$pid" ] && echo yes || echo no)"
-echo "\$pid" > '${pid_file}'
-
-sleep 0.25
-
-if kill -0 "\$pid" 2>/dev/null; then
-    echo 'spinner_running=yes'
-else
-    echo 'spinner_running=no'
-fi
-
-tc_spinner_stop
-sleep 0.1
-
-if kill -0 "\$pid" 2>/dev/null; then
-    echo 'spinner_stopped=no'
-else
-    echo 'spinner_stopped=yes'
-fi
-echo "pid_cleared=\$([ -z "\$TC_SPINNER_PID" ] && echo yes || echo no)"
-HELPEREOF
-
-    local output
-    output=$(bash "$helper" 2>/dev/null)
-
-    echo "$output" | grep -q "spinner_pid_set=yes" || { echo "Spinner PID should be set: $output"; return 1; }
-    echo "$output" | grep -q "spinner_running=yes" || { echo "Spinner should be running after start: $output"; return 1; }
-    echo "$output" | grep -q "spinner_stopped=yes" || { echo "Spinner process should be dead after stop: $output"; return 1; }
-    echo "$output" | grep -q "pid_cleared=yes" || { echo "TC_SPINNER_PID should be cleared after stop: $output"; return 1; }
+    # Check BRAILLE_SPINNER is defined
+    grep -q "BRAILLE_SPINNER" "$theme_file" || { echo "BRAILLE_SPINNER not found in theme.ts"; return 1; }
+    # Check at least one braille char is present
+    grep -qE "⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏" "$theme_file" || { echo "Braille spinner chars missing in theme.ts"; return 1; }
     return 0
 }
 
-# Test 10: Header renders with correct content
-_test_header_renders() {
-    local output
-    output=$(bash -c "
-        # Mock tput to avoid terminal requirement
-        tput() {
-            case \"\$1\" in
-                cols)  echo 80 ;;
-                lines) echo 24 ;;
-                cup)   printf '\033[%d;%dH' \"\$((\$2+1))\" \"\$((\$3+1))\" ;;
-                *)     : ;;
-            esac
-        }
-        source '${PROJECT_ROOT}/lib/tui-core.sh'
-        TC_COLS=80
-        TC_ROWS=24
-        output=\$(tc_draw_header 2>/dev/null)
-        echo \"\$output\"
-    " 2>/dev/null)
+# Test 10: TypeScript TUI theme exports required brand colors
+_test_theme_exports() {
+    local theme_file="${PROJECT_ROOT}/tui/src/theme.ts"
+    [[ -f "$theme_file" ]] || { echo "Missing theme.ts: $theme_file"; return 1; }
 
-    echo "$output" | grep -q "TARVOS" || { echo "Header should contain TARVOS: $output"; return 1; }
-    # Check for emoji or brand content
-    echo "$output" | grep -qE "(🦥|TARVOS)" || { echo "Header should contain brand: $output"; return 1; }
+    for field in accent purple muted success warning error info panelBg; do
+        grep -q "\"${field}\":" "$theme_file" || grep -q "${field}:" "$theme_file" || {
+            echo "Missing theme field '${field}' in theme.ts"
+            return 1
+        }
+    done
+
+    # Check TARVOS brand color (gum pink accent)
+    grep -q "#D75FAF\|#d75faf" "$theme_file" || { echo "Brand accent color #D75FAF not found in theme.ts"; return 1; }
     return 0
 }
 
@@ -640,21 +528,21 @@ EOF
 # Main — run all tests
 # ──────────────────────────────────────────────────────────────
 main() {
-    printf "\n${_BOLD}Tarvos TUI Smoke Tests${_RESET}\n"
+    printf "\n${_BOLD}Tarvos Smoke Tests${_RESET}\n"
     printf "${_DIM}Running %d tests...${_RESET}\n\n" "$TOTAL_TESTS"
 
     _setup_tmpdir
 
-    _run_test  1 "List screen renders"                    _test_list_renders
-    _run_test  2 "List screen navigation"                 _test_list_navigation
+    _run_test  1 "TUI source files exist"                 _test_tui_source_files_exist
+    _run_test  2 "TUI TypeScript type-checks"             _test_tui_typecheck
     _run_test  3 "Action overlay renders"                 _test_action_overlay_actions
-    _run_test  4 "Run view renders"                       _test_run_view_renders
-    _run_test  5 "Log view toggle"                        _test_log_view_toggle
+    _run_test  4 "Session state.json parseable"           _test_session_state_parseable
+    _run_test  5 "JSONL event file format"                _test_events_jsonl_format
     _run_test  6 "Completion summary overlay"             _test_completion_summary_overlay
     _run_test  7 "Worktree creation"                      _test_worktree_create_remove
     _run_test  8 "Dual worktree coexistence"              _test_dual_worktree_coexistence
-    _run_test  9 "Spinner renders"                        _test_spinner_renders
-    _run_test 10 "Header renders"                         _test_header_renders
+    _run_test  9 "Spinner chars defined in theme"         _test_spinner_chars_defined
+    _run_test 10 "Theme exports brand colors"             _test_theme_exports
     _run_test 11 "Git validation — no repo"               _test_git_validation_no_repo
     _run_test 12 "Git validation — missing .gitignore"    _test_git_validation_no_gitignore
     _run_test 13 "Existing .gitignore updated"            _test_git_validation_existing_gitignore

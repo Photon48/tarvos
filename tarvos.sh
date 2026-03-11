@@ -719,7 +719,7 @@ cmd_begin() {
     # run the agent loop directly in this process (we ARE the background worker).
     if [[ ! -t 0 ]]; then
         # Source library modules
-        source "${SCRIPT_DIR}/lib/log-manager.sh"
+        source "${SCRIPT_DIR}/lib/agent-logger.sh"
         source "${SCRIPT_DIR}/lib/prompt-builder.sh"
         source "${SCRIPT_DIR}/lib/signal-detector.sh"
         source "${SCRIPT_DIR}/lib/context-monitor.sh"
@@ -1327,7 +1327,6 @@ shutdown() {
         wait "$CLAUDE_PID" 2>/dev/null || true
     fi
     CLAUDE_PID=""
-    tui_cleanup
 
     # Update session state to stopped if a session is active
     if [[ -n "${CURRENT_SESSION_NAME:-}" ]]; then
@@ -1363,8 +1362,6 @@ run_iteration() {
 
     # Initialize events log for this loop (enables emit_tui_event in context-monitor.sh)
     set_events_log "$events_log"
-    # Start the TUI event tail reader so the run view receives live updates
-    tui_start_events_tail "$loop_num"
 
     # Build the prompt (pass session progress file if set)
     local prompt
@@ -1394,14 +1391,11 @@ run_iteration() {
 
     # Handle context limit hit
     if (( stream_exit == 1 )) || (( CONTEXT_LIMIT_HIT )); then
-        tui_set_status "CONTEXT_LIMIT"
         log_warning "Context limit reached ($(get_total_tokens) tokens >= ${TOKEN_LIMIT})"
 
         kill_claude_process "$CLAUDE_PID"
         CLAUDE_PID=""
 
-        tui_set_status "CONTINUATION"
-        tui_set_phase_info "Writing progress.md (continuation)..."
         local continuation_prompt
         continuation_prompt=$(build_context_limit_prompt "${PROGRESS_FILE:-}")
         run_continuation_session "$continuation_prompt" "$raw_log" "$text_output"
@@ -1451,8 +1445,6 @@ ensure_progress_file() {
     fi
 
     log_warning "progress.md not found after iteration"
-    tui_set_status "RECOVERY"
-    tui_set_phase_info "Recovering progress.md..."
 
     local recovery_prompt
     recovery_prompt=$(build_recovery_prompt "$PROJECT_DIR" "$progress_file")
@@ -1505,22 +1497,12 @@ run_agent_loop() {
     fi
     init_logging "$log_base_dir"
 
-    # Initialize TUI dashboard
-    tui_init "$MAX_LOOPS" "$TOKEN_LIMIT"
-
     # Signal traps
     trap 'shutdown 130' INT
     trap 'shutdown 143' TERM
-    trap 'tui_cleanup' EXIT
 
     local start_time
     start_time=$(date +%s)
-
-    if (( continue_mode )); then
-        tui_set_phase_info "Continuing from progress.md..."
-    else
-        tui_set_phase_info "Initializing..."
-    fi
 
     log_info "PRD: ${PRD_FILE}"
     log_info "Project: ${PROJECT_DIR}"
@@ -1572,7 +1554,6 @@ run_agent_loop() {
             case "$DETECTED_SIGNAL" in
                 ALL_PHASES_COMPLETE)
                     log_success "All phases complete!"
-                    tui_set_phase_info "All phases complete"
                     final_signal="$DETECTED_SIGNAL"
                     if [[ -n "$session_name" ]]; then
                         session_set_status "$session_name" "done"
@@ -1580,26 +1561,21 @@ run_agent_loop() {
                     fi
                     # Generate completion summary (non-blocking: runs then continues)
                     if [[ -n "$session_name" ]]; then
-                        tui_set_phase_info "Generating summary..."
                         log_info "Generating completion summary..."
                         if generate_summary "$session_name" "$PRD_FILE" "${PROGRESS_FILE:-}" "$LOG_DIR"; then
                             log_success "Summary saved to .tarvos/sessions/${session_name}/summary.md"
-                            tui_set_phase_info "Summary saved. All phases complete."
                         else
                             log_warning "Summary generation failed (summary unavailable)"
-                            tui_set_phase_info "All phases complete (summary unavailable)"
                         fi
                     fi
                     break
                     ;;
                 PHASE_COMPLETE)
                     log_success "Phase complete, starting next iteration..."
-                    tui_set_phase_info "Phase complete, preparing next..."
                     ensure_progress_file
                     ;;
                 PHASE_IN_PROGRESS)
                     log_info "Phase in progress, continuing in next iteration..."
-                    tui_set_phase_info "In progress, preparing continuation..."
                     ensure_progress_file
                     ;;
             esac

@@ -14,12 +14,15 @@ Run multiple plans concurrently. Each session gets its own isolated git worktree
 
 ## Quickstart
 
-**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI, `jq`, `bash`
+**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI, `jq`, `bash`, [`bun`](https://bun.sh) (for the TUI)
 
 ```bash
 git clone https://github.com/anomalyco/tarvos.git
 cd tarvos
 ./install.sh          # symlinks tarvos → /usr/local/bin/tarvos
+
+# Install TUI dependencies (required for `tarvos tui`)
+cd tui && bun install
 ```
 
 Then from your project repo:
@@ -45,7 +48,7 @@ Write a planning document describing what you want to build — phases, sprints,
 
 ### `tarvos` / `tarvos tui`
 
-Open the interactive session browser. Run `tarvos` with no arguments or `tarvos tui`.
+Open the interactive session browser (TypeScript TUI powered by [OpenTUI](https://github.com/anomalyco/opentui) and [Bun](https://bun.sh)). Run `tarvos` with no arguments or `tarvos tui`.
 
 ```
 ╭── Sessions ──────────────────────────────── 3 sessions ───╮
@@ -59,6 +62,8 @@ Open the interactive session browser. Run `tarvos` with no arguments or `tarvos 
 ```
 
 Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open run view or actions menu, `s` start, `a` accept, `r` reject, `n` new session, `R` refresh, `q` quit.
+
+> **Note:** The TUI requires [Bun](https://bun.sh) and its dependencies to be installed (`cd tui && bun install`). All session monitoring, log streaming, and summary viewing is built into the TUI — no separate terminal windows needed.
 
 ---
 

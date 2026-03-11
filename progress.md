@@ -1,24 +1,23 @@
 # Progress Report
 
 ## Current Status
-Phase 3 of 4: Summary Overlay Screen
+Phase 4 of 4: Deprecation
 Status: COMPLETED
 
 ## What Was Done This Session
-- tui/src/screens/SummaryScreen.tsx: New screen — reads summary.md, watches for file changes, live streaming, [s] opens file, [q/Enter] back
-- tui/src/App.tsx: Added "summary" screen type + navigateToSummary() handler
-- tui/src/screens/SessionListScreen.tsx: ActionOverlay "View Summary" now navigates to SummaryScreen instead of calling tarvos command
-- tui/src/screens/RunDashboardScreen.tsx: Added onViewSummary prop + [s] keybind + footer hint
+- lib/agent-logger.sh: New file — extracted non-TUI logging functions from log-manager.sh
+- lib/tui-core.sh, lib/tui-app.sh, lib/list-tui.sh, lib/log-manager.sh: Deleted
+- tarvos.sh: source log-manager.sh → agent-logger.sh; removed all tui_* calls (tui_init, tui_cleanup, tui_start_events_tail, tui_set_status, tui_set_phase_info)
+- README.md: Added bun prerequisite and TUI install step; updated tarvos tui section
+- tests/smoke-test.sh: Replaced 6 bash-TUI-dependent tests with TypeScript TUI tests (file existence, typecheck, theme exports, event format, session state parsing)
 
 ## Immediate Next Task
-Begin Phase 4: Delete Bash TUI files and clean up tarvos.sh references.
-Delete lib/tui-core.sh, lib/tui-app.sh, lib/list-tui.sh, lib/log-manager.sh.
-Remove source lines and TUI function calls from tarvos.sh.
+All 4 phases are complete. The OpenTUI migration is fully done.
+Run `tarvos tui` to verify end-to-end, then close out.
 
 ## Key Files for Next Task
-- tarvos.sh (remove source calls, tui_* function calls, simplify cmd_tui)
-- lib/tui-core.sh, lib/tui-app.sh, lib/list-tui.sh, lib/log-manager.sh (delete)
+- None — all phases complete
 
 ## Gotchas
 - bun is at /Users/rishugoyal/.bun/bin/bun
-- tsc --noEmit and bun build both pass cleanly after Phase 3
+- All 13 smoke tests pass; tsc --noEmit passes cleanly
