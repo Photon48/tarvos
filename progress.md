@@ -1,22 +1,20 @@
 # Progress Report
 
 ## Current Status
-Phase 4 of 7: Update tarvos.sh
+Phase 5 of 7: Update lib/session-manager.sh and lib/context-monitor.sh
 Status: COMPLETED
 
 ## What Was Done This Session
-- tarvos.sh: Replaced bun resolution block with dev comment
-- tarvos.sh: Added bundled dependency resolution block (TARVOS_JQ + _TUI_BIN with priority fallbacks)
-- tarvos.sh: Updated both TUI invocations (cmd_tui + main) to use `exec "$_TUI_BIN"` with error guard
-- tarvos.sh: Removed `command -v jq` prerequisite guards from cmd_init, cmd_begin, cmd_continue, cmd_migrate
+- lib/session-manager.sh: Replaced all 28 bare `jq` calls with `"$TARVOS_JQ"`
+- lib/context-monitor.sh: Replaced all 17 bare `jq` calls with `"$TARVOS_JQ"`
+- tests/smoke-test.sh: Updated 6 real `jq` calls to `${TARVOS_JQ:-jq}`; mock stubs untouched
+- All 19 smoke tests pass
 
 ## Immediate Next Task
-Begin Phase 5: Replace every bare `jq` call in lib/session-manager.sh and lib/context-monitor.sh with `"$TARVOS_JQ"`. Mechanical find-and-replace across ~48 call sites. Also update the 6 real jq calls in tests/smoke-test.sh to use `${TARVOS_JQ:-jq}`.
+Begin Phase 6: Add `cmd_update()` function to tarvos.sh. Fetches latest release tag (or accepts --version), downloads fresh TUI binary and tarvos.sh tarball, skips jq re-download unless --force. Add `update` to the case dispatch and --help.
 
 ## Key Files for Next Task
-- lib/session-manager.sh
-- lib/context-monitor.sh
-- tests/smoke-test.sh
+- tarvos.sh (add cmd_update function and wire into dispatch + help)
 
 ## Gotchas
-- Mock stubs in smoke-test.sh replace the binary — those are fine as-is; only the real jq calls need updating
+- None

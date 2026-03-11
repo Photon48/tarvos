@@ -75,7 +75,7 @@ registry_update() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg name "$name" \
+    "$TARVOS_JQ" --arg name "$name" \
        --arg status "$status" \
        --arg branch "$branch" \
        --arg original_branch "$original_branch" \
@@ -96,7 +96,7 @@ registry_remove() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg name "$name" 'del(.sessions[$name])' "$REGISTRY_FILE" > "$tmp" && mv "$tmp" "$REGISTRY_FILE"
+    "$TARVOS_JQ" --arg name "$name" 'del(.sessions[$name])' "$REGISTRY_FILE" > "$tmp" && mv "$tmp" "$REGISTRY_FILE"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ session_init() {
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     # Write state.json
-    jq -n \
+    "$TARVOS_JQ" -n \
         --arg name "$name" \
         --arg prd_file "$prd_path" \
         --arg token_limit "$token_limit" \
@@ -186,19 +186,19 @@ session_load() {
     local state_file
     state_file=$(session_state_file "$name")
 
-    SESSION_NAME=$(jq -r '.name' "$state_file")
-    SESSION_STATUS=$(jq -r '.status' "$state_file")
-    SESSION_PRD_FILE=$(jq -r '.prd_file' "$state_file")
-    SESSION_TOKEN_LIMIT=$(jq -r '.token_limit' "$state_file")
-    SESSION_MAX_LOOPS=$(jq -r '.max_loops' "$state_file")
-    SESSION_BRANCH=$(jq -r '.branch' "$state_file")
-    SESSION_ORIGINAL_BRANCH=$(jq -r '.original_branch' "$state_file")
-    SESSION_WORKTREE_PATH=$(jq -r '.worktree_path // ""' "$state_file")
-    SESSION_CREATED_AT=$(jq -r '.created_at' "$state_file")
-    SESSION_STARTED_AT=$(jq -r '.started_at' "$state_file")
-    SESSION_LAST_ACTIVITY=$(jq -r '.last_activity' "$state_file")
-    SESSION_LOOP_COUNT=$(jq -r '.loop_count' "$state_file")
-    SESSION_FINAL_SIGNAL=$(jq -r '.final_signal // ""' "$state_file")
+    SESSION_NAME=$("$TARVOS_JQ" -r '.name' "$state_file")
+    SESSION_STATUS=$("$TARVOS_JQ" -r '.status' "$state_file")
+    SESSION_PRD_FILE=$("$TARVOS_JQ" -r '.prd_file' "$state_file")
+    SESSION_TOKEN_LIMIT=$("$TARVOS_JQ" -r '.token_limit' "$state_file")
+    SESSION_MAX_LOOPS=$("$TARVOS_JQ" -r '.max_loops' "$state_file")
+    SESSION_BRANCH=$("$TARVOS_JQ" -r '.branch' "$state_file")
+    SESSION_ORIGINAL_BRANCH=$("$TARVOS_JQ" -r '.original_branch' "$state_file")
+    SESSION_WORKTREE_PATH=$("$TARVOS_JQ" -r '.worktree_path // ""' "$state_file")
+    SESSION_CREATED_AT=$("$TARVOS_JQ" -r '.created_at' "$state_file")
+    SESSION_STARTED_AT=$("$TARVOS_JQ" -r '.started_at' "$state_file")
+    SESSION_LAST_ACTIVITY=$("$TARVOS_JQ" -r '.last_activity' "$state_file")
+    SESSION_LOOP_COUNT=$("$TARVOS_JQ" -r '.loop_count' "$state_file")
+    SESSION_FINAL_SIGNAL=$("$TARVOS_JQ" -r '.final_signal // ""' "$state_file")
 
     return 0
 }
@@ -216,14 +216,14 @@ session_set_status() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg status "$status" --arg now "$now" \
+    "$TARVOS_JQ" --arg status "$status" --arg now "$now" \
         '.status = $status | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 
     # Also update registry
     local branch original_branch
-    branch=$(jq -r '.branch // ""' "$state_file")
-    original_branch=$(jq -r '.original_branch // ""' "$state_file")
+    branch=$("$TARVOS_JQ" -r '.branch // ""' "$state_file")
+    original_branch=$("$TARVOS_JQ" -r '.original_branch // ""' "$state_file")
     registry_update "$name" "$status" "$branch" "$original_branch" "$now"
 }
 
@@ -249,7 +249,7 @@ session_update() {
     done
     jq_filter+=" | .last_activity = \"${now}\""
 
-    jq "$jq_filter" "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+    "$TARVOS_JQ" "$jq_filter" "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
 
 # Check if a session exists
@@ -270,7 +270,7 @@ session_list() {
     local name
     for state_file in "${SESSIONS_DIR}"/*/state.json; do
         [[ -f "$state_file" ]] || continue
-        name=$(jq -r '.name' "$state_file" 2>/dev/null)
+        name=$("$TARVOS_JQ" -r '.name' "$state_file" 2>/dev/null)
         [[ -n "$name" ]] && echo "$name"
     done
 }
@@ -334,7 +334,7 @@ session_forget() {
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     local tmp
     tmp=$(mktemp)
-    jq --arg now "$now" \
+    "$TARVOS_JQ" --arg now "$now" \
         '.status = "forgotten" | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 
@@ -354,7 +354,7 @@ session_set_loop_count() {
 
     local tmp
     tmp=$(mktemp)
-    jq --argjson count "$count" --arg now "$now" \
+    "$TARVOS_JQ" --argjson count "$count" --arg now "$now" \
         '.loop_count = $count | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
@@ -369,7 +369,7 @@ session_set_final_signal() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg signal "$signal" '.final_signal = $signal' \
+    "$TARVOS_JQ" --arg signal "$signal" '.final_signal = $signal' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
 
@@ -386,14 +386,14 @@ session_set_branch() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg branch "$branch" \
+    "$TARVOS_JQ" --arg branch "$branch" \
        --arg original_branch "$original_branch" \
        --arg now "$now" \
        '.branch = $branch | .original_branch = $original_branch | .last_activity = $now' \
        "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 
     local status
-    status=$(jq -r '.status' "$state_file")
+    status=$("$TARVOS_JQ" -r '.status' "$state_file")
     registry_update "$name" "$status" "$branch" "$original_branch" "$now"
 }
 
@@ -409,7 +409,7 @@ session_set_worktree_path() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg wt_path "$wt_path" --arg now "$now" \
+    "$TARVOS_JQ" --arg wt_path "$wt_path" --arg now "$now" \
         '.worktree_path = $wt_path | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
@@ -425,7 +425,7 @@ session_mark_started() {
 
     local tmp
     tmp=$(mktemp)
-    jq --arg now "$now" '.started_at = $now | .last_activity = $now' \
+    "$TARVOS_JQ" --arg now "$now" '.started_at = $now | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
 
@@ -439,6 +439,6 @@ session_set_log_dir() {
     local now
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     local tmp="${state_file}.tmp.$$"
-    jq --arg v "$log_dir" --arg now "$now" '.log_dir = $v | .last_activity = $now' \
+    "$TARVOS_JQ" --arg v "$log_dir" --arg now "$now" '.log_dir = $v | .last_activity = $now' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }

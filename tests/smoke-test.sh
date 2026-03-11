@@ -635,7 +635,7 @@ _test_missing_worktree_aborts() {
     local state_file="${workdir}/.tarvos/sessions/${sname}/state.json"
     local nonexistent_path="/tmp/nonexistent-tarvos-wt-$$"
     local tmp="${state_file}.tmp"
-    jq --arg v "$nonexistent_path" '.status = "stopped" | .worktree_path = $v' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+    ${TARVOS_JQ:-jq} --arg v "$nonexistent_path" '.status = "stopped" | .worktree_path = $v' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 
     # tarvos continue should fail with "does not exist"
     local combined exit_code=0
@@ -646,7 +646,7 @@ _test_missing_worktree_aborts() {
 
     # Session status must still be "stopped" — not changed to "running"
     local status
-    status=$(jq -r '.status' "$state_file" 2>/dev/null || echo "")
+    status=$(${TARVOS_JQ:-jq} -r '.status' "$state_file" 2>/dev/null || echo "")
     [[ "$status" == "stopped" ]] || { echo "Session status should remain 'stopped', got: $status"; return 1; }
     return 0
 }
@@ -711,7 +711,7 @@ _test_continue_resumes_session() {
     local attempts=0
     local status=""
     while [[ $attempts -lt 20 ]]; do
-        status=$(jq -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        status=$(${TARVOS_JQ:-jq} -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
         [[ "$status" == "running" ]] && break
         sleep 0.5
         (( attempts++ ))
@@ -727,7 +727,7 @@ _test_continue_resumes_session() {
     # Wait for status to become "stopped" (up to 5s)
     attempts=0
     while [[ $attempts -lt 10 ]]; do
-        status=$(jq -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        status=$(${TARVOS_JQ:-jq} -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
         [[ "$status" == "stopped" ]] && break
         sleep 0.5
         (( attempts++ ))
@@ -740,7 +740,7 @@ _test_continue_resumes_session() {
     # Wait for status to become "running" again (up to 10s)
     attempts=0
     while [[ $attempts -lt 20 ]]; do
-        status=$(jq -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        status=$(${TARVOS_JQ:-jq} -r '.status' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
         [[ "$status" == "running" ]] && break
         sleep 0.5
         (( attempts++ ))
@@ -775,7 +775,7 @@ _test_log_dir_in_state() {
     local log_dir=""
     local attempts=0
     while [[ $attempts -lt 30 ]]; do
-        log_dir=$(jq -r '.log_dir // ""' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
+        log_dir=$(${TARVOS_JQ:-jq} -r '.log_dir // ""' "${workdir}/.tarvos/sessions/${sname}/state.json" 2>/dev/null || echo "")
         [[ -n "$log_dir" ]] && break
         sleep 0.5
         (( attempts++ ))

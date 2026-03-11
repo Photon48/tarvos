@@ -64,20 +64,20 @@ process_stream() {
 
         # Try to parse as JSON and extract relevant data
         local event_type
-        event_type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null)
+        event_type=$(echo "$line" | "$TARVOS_JQ" -r '.type // empty' 2>/dev/null)
 
         # Check if this event is from a subagent (has parent_tool_use_id).
         # Subagents have their own separate context window — their usage must
         # NOT be mixed with the main agent's context tracking.
         local is_subagent
-        is_subagent=$(echo "$line" | jq -r '.parent_tool_use_id // empty' 2>/dev/null)
+        is_subagent=$(echo "$line" | "$TARVOS_JQ" -r '.parent_tool_use_id // empty' 2>/dev/null)
 
         case "$event_type" in
             # Claude Code stream-json emits "assistant" type messages with content
             assistant)
                 # Extract text content from the message (include subagent text for signal detection)
                 local text
-                text=$(echo "$line" | jq -r '
+                text=$(echo "$line" | "$TARVOS_JQ" -r '
                     if .message.content then
                         [.message.content[] | select(.type == "text") | .text] | join("")
                     else
@@ -92,14 +92,14 @@ process_stream() {
                         brief_text="${brief_text//$'\n'/ }"
                         local ts
                         ts=$(date +%s)
-                        emit_tui_event "{\"type\":\"text\",\"content\":$(printf '%s' "$brief_text" | jq -Rs '.'),\"ts\":${ts}}"
+                        emit_tui_event "{\"type\":\"text\",\"content\":$(printf '%s' "$brief_text" | "$TARVOS_JQ" -Rs '.'),\"ts\":${ts}}"
                     fi
                 fi
 
                 # Emit tool_use events from assistant message content
                 if [[ -n "$_CM_EVENTS_LOG" ]] && [[ -z "$is_subagent" ]]; then
                     local tool_events
-                    tool_events=$(echo "$line" | jq -c '
+                    tool_events=$(echo "$line" | "$TARVOS_JQ" -c '
                         if .message.content then
                             .message.content[] | select(.type == "tool_use") | {
                                 type: "tool_use",
@@ -116,7 +116,7 @@ process_stream() {
                         ts=$(date +%s)
                         while IFS= read -r ev; do
                             [[ -z "$ev" ]] && continue
-                            emit_tui_event "$(echo "$ev" | jq -c --argjson ts "$ts" '. + {ts:$ts}')"
+                            emit_tui_event "$(echo "$ev" | "$TARVOS_JQ" -c --argjson ts "$ts" '. + {ts:$ts}')"
                         done <<< "$tool_events"
                     fi
                 fi
@@ -133,12 +133,12 @@ process_stream() {
                     local ts
                     ts=$(date +%s)
                     local tool_id output success
-                    tool_id=$(echo "$line" | jq -r '.tool_use_id // ""' 2>/dev/null)
-                    output=$(echo "$line" | jq -r '(.content // "") | if type == "array" then .[0].text // "" else . end' 2>/dev/null)
+                    tool_id=$(echo "$line" | "$TARVOS_JQ" -r '.tool_use_id // ""' 2>/dev/null)
+                    output=$(echo "$line" | "$TARVOS_JQ" -r '(.content // "") | if type == "array" then .[0].text // "" else . end' 2>/dev/null)
                     output="${output:0:80}"
                     output="${output//$'\n'/ }"
-                    success=$(echo "$line" | jq -r 'if .is_error then "false" else "true" end' 2>/dev/null)
-                    emit_tui_event "{\"type\":\"tool_result\",\"tool_use_id\":$(printf '%s' "$tool_id" | jq -Rs '.'),\"output\":$(printf '%s' "$output" | jq -Rs '.'),\"success\":${success:-true},\"ts\":${ts}}"
+                    success=$(echo "$line" | "$TARVOS_JQ" -r 'if .is_error then "false" else "true" end' 2>/dev/null)
+                    emit_tui_event "{\"type\":\"tool_result\",\"tool_use_id\":$(printf '%s' "$tool_id" | "$TARVOS_JQ" -Rs '.'),\"output\":$(printf '%s' "$output" | "$TARVOS_JQ" -Rs '.'),\"success\":${success:-true},\"ts\":${ts}}"
                 fi
                 if [[ -z "$is_subagent" ]]; then
                     extract_usage_from_line "$line" "$loop_num" "$token_limit"
@@ -148,7 +148,7 @@ process_stream() {
             # Handle result type (final message)
             result)
                 local text
-                text=$(echo "$line" | jq -r '
+                text=$(echo "$line" | "$TARVOS_JQ" -r '
                     if .result then .result
                     elif .subtype == "success" then ""
                     else empty
@@ -217,17 +217,17 @@ extract_usage_from_line() {
     # Extract all token fields from the usage object
     # Try .message.usage first (assistant events), then top-level .usage
     local usage_json
-    usage_json=$(echo "$line" | jq -r '
+    usage_json=$(echo "$line" | "$TARVOS_JQ" -r '
         (.message.usage // .usage // .result_usage // null)
     ' 2>/dev/null)
 
     [[ -z "$usage_json" || "$usage_json" == "null" ]] && return 0
 
     local input_tokens cache_creation cache_read output_tokens
-    input_tokens=$(echo "$usage_json" | jq -r '.input_tokens // 0' 2>/dev/null)
-    cache_creation=$(echo "$usage_json" | jq -r '.cache_creation_input_tokens // 0' 2>/dev/null)
-    cache_read=$(echo "$usage_json" | jq -r '.cache_read_input_tokens // 0' 2>/dev/null)
-    output_tokens=$(echo "$usage_json" | jq -r '.output_tokens // 0' 2>/dev/null)
+    input_tokens=$(echo "$usage_json" | "$TARVOS_JQ" -r '.input_tokens // 0' 2>/dev/null)
+    cache_creation=$(echo "$usage_json" | "$TARVOS_JQ" -r '.cache_creation_input_tokens // 0' 2>/dev/null)
+    cache_read=$(echo "$usage_json" | "$TARVOS_JQ" -r '.cache_read_input_tokens // 0' 2>/dev/null)
+    output_tokens=$(echo "$usage_json" | "$TARVOS_JQ" -r '.output_tokens // 0' 2>/dev/null)
 
     # Compute total input (context window size) = uncached + cache_creation + cache_read
     local total_input=0
@@ -331,7 +331,7 @@ run_continuation_session() {
     local text
     text=$(echo "$continuation_output" | while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        echo "$line" | jq -r '
+        echo "$line" | "$TARVOS_JQ" -r '
             if .type == "assistant" then
                 [.message.content[]? | select(.type == "text") | .text] | join("")
             elif .type == "result" then
