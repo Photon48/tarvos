@@ -1167,10 +1167,22 @@ cmd_accept() {
     fi
 
     # 4. Attempt merge (branch_merge checks out target and merges source)
-    if ! branch_merge "$source_branch" "$target_branch"; then
-        # branch_merge already printed resolution instructions
+    local _merge_stderr_file
+    _merge_stderr_file=$(mktemp)
+    if ! branch_merge "$source_branch" "$target_branch" 2>"$_merge_stderr_file"; then
+        local _merge_err
+        _merge_err=$(cat "$_merge_stderr_file")
+        rm -f "$_merge_stderr_file"
+        if echo "$_merge_err" | grep -q "already checked out"; then
+            echo "tarvos accept: The branch is checked out in another location." >&2
+            echo "  Please 'cd' out of that directory and run accept again." >&2
+        else
+            # branch_merge already printed resolution instructions
+            [[ -n "$_merge_err" ]] && echo "$_merge_err" >&2
+        fi
         exit 1
     fi
+    rm -f "$_merge_stderr_file"
 
     echo "  Merge successful."
 
@@ -1667,14 +1679,19 @@ run_agent_loop() {
                     local _done_ts
                     _done_ts=$(date +%s)
                     emit_tui_event "{\"type\":\"status\",\"content\":\"done\",\"ts\":${_done_ts}}"
-                    # Generate completion summary (non-blocking: runs then continues)
+                    # 1. Generate summary while worktree still exists
                     if [[ -n "$session_name" ]]; then
                         log_info "Generating completion summary..."
-                        if generate_summary "$session_name" "$PRD_FILE" "${PROGRESS_FILE:-}" "$LOG_DIR"; then
+                        if generate_summary "$session_name" "$PRD_FILE" "${PROGRESS_FILE:-}" "$LOG_DIR" "${WORKTREE_PATH:-}"; then
                             log_success "Summary saved to .tarvos/sessions/${session_name}/summary.md"
                         else
                             log_warning "Summary generation failed (summary unavailable)"
                         fi
+                    fi
+                    # 2. Remove worktree AFTER summary so branch is freely accessible
+                    if [[ -n "$session_name" ]] && worktree_exists "$session_name"; then
+                        log_info "Releasing worktree (branch remains for review)..."
+                        worktree_remove "$session_name" || true
                     fi
                     break
                     ;;
@@ -1719,6 +1736,11 @@ run_agent_loop() {
             session_set_status "$session_name" "stopped"
         fi
         session_set_final_signal "$session_name" "$final_signal"
+        # Release worktree for stopped/failed so branch is freely accessible
+        if worktree_exists "$session_name"; then
+            log_info "Releasing worktree (branch remains for review)..."
+            worktree_remove "$session_name" || true
+        fi
     fi
 
     log_final_summary "$loop_num" "$final_signal" "$start_time" "$session_name"

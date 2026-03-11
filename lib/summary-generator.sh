@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # summary-generator.sh - Completion summary generator for Tarvos sessions
-# Phase 4: Called when ALL_PHASES_COMPLETE is detected. Invokes Claude non-agentically
-# to produce a ≤30-line developer-facing summary, streamed to summary.md.
+# Called when ALL_PHASES_COMPLETE is detected. Uses `claude --continue` from
+# the worktree directory to resume the last Claude Code session and produce
+# a structured markdown summary written to summary.md.
 
 # ──────────────────────────────────────────────────────────────
 # generate_summary
 # Generate a human-readable summary of what the PRD built.
-# Calls `claude -p <prompt> --output-format text` non-agentically.
-# Output is streamed line-by-line to <session_dir>/summary.md and
-# also appended to the dashboard.log with a [SUMMARY] prefix.
+# Uses `claude --continue` from the worktree so Claude has full
+# context of what it actually built.
 #
 # Args:
 #   $1 = session_name
 #   $2 = prd_file (path to the PRD markdown)
 #   $3 = progress_file (path to the final progress.md)
 #   $4 = log_dir (path to the session's log directory, for dashboard.log)
+#   $5 = worktree_path (NEW: worktree dir to run --continue from)
 #
 # Returns: 0 on success, 1 if claude invocation fails.
 # ──────────────────────────────────────────────────────────────
@@ -23,6 +24,7 @@ generate_summary() {
     local prd_file="$2"
     local progress_file="$3"
     local log_dir="$4"
+    local worktree_path="$5"   # NEW: worktree dir to run --continue from
 
     local session_dir=".tarvos/sessions/${session_name}"
     local summary_file="${session_dir}/summary.md"
@@ -34,51 +36,28 @@ generate_summary() {
         return 1
     fi
 
-    # Read PRD content
-    local prd_content
-    prd_content=$(cat "$prd_file" 2>/dev/null || echo "")
-
-    # Read progress.md content (may not exist on very first completion)
-    local progress_content=""
-    if [[ -f "$progress_file" ]]; then
-        progress_content=$(cat "$progress_file" 2>/dev/null || echo "")
+    # Validate worktree path
+    if [[ -z "$worktree_path" ]] || [[ ! -d "$worktree_path" ]]; then
+        echo "generate_summary: worktree path missing or gone: ${worktree_path}" >&2
+        return 1
     fi
 
     # Build the summary prompt
     local prompt
     prompt=$(cat <<PROMPT
-You are a developer-focused summary writer for an AI coding orchestration tool called Tarvos.
+You are the same coding agent that just completed all phases of the PRD for session "${session_name}".
 
-A session named "${session_name}" just completed all phases of this PRD:
+Write a compact, structured markdown summary of what you built during this session.
+Target length: half a page to one page of markdown.
 
---- PRD START ---
-${prd_content}
---- PRD END ---
+Include:
+- **What was built**: key features, components, functions added or changed
+- **Files changed**: list each file with a one-line description of the change
+- **How to use**: brief usage instructions or code examples if relevant
+- **Notes**: any caveats, known limitations, or follow-up items
 
---- PROGRESS REPORT (final state) ---
-${progress_content}
---- PROGRESS REPORT END ---
-
-Write a concise developer-facing summary (30 lines maximum) covering:
-1. What was built (features, functionality, key components)
-2. Which files were changed or created (list them concisely)
-3. How to use the new feature or fix (code examples if helpful, briefly)
-4. Any follow-up notes or caveats
-
-Format it as plain text with section headers like:
-  What was built:
-  › item
-
-  Files changed:
-  › file: description
-
-  How to use:
-  › usage
-
-  Notes:
-  › note
-
-Be specific and actionable. Skip preamble — start directly with content.
+Start directly with the content — no preamble.
+Format with markdown headers, bullet points, and code blocks where appropriate.
 PROMPT
 )
 
@@ -86,10 +65,17 @@ PROMPT
     mkdir -p "$session_dir"
     > "$summary_file"
 
-    # Stream output from claude to summary.md line by line
+    # TODO: Make coding-agent agnostic — currently Claude Code specific (uses `claude --continue`)
     local summary_output
-    if ! summary_output=$(claude -p "$prompt" --output-format text 2>/dev/null); then
-        echo "generate_summary: claude invocation failed for session '${session_name}'" >&2
+    if ! summary_output=$(
+        cd "$worktree_path" && \
+        claude --continue \
+            -p "$prompt" \
+            --dangerously-skip-permissions \
+            --output-format text \
+            2>/dev/null
+    ); then
+        echo "generate_summary: claude --continue invocation failed for session '${session_name}'" >&2
         return 1
     fi
 

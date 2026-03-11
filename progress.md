@@ -1,22 +1,25 @@
 # Progress Report
 
 ## Current Status
-Phase 2 of 7: Dashboard Redesign
+Phase 4 of 7: Worktree Auto-Cleanup
 Status: COMPLETED
-(Also completed Phase 7 tool arg extraction and Phase 5 completion panel — per PRD implementation order)
+(Also completed Phase 3: Summary Generator Fix)
 
 ## What Was Done This Session
-- tui/src/types.ts: Added `arg` field to TuiEvent interface
-- lib/context-monitor.sh: Updated tool_use event emission to extract file_path/command/pattern as `arg`
-- tui/src/screens/RunDashboardScreen.tsx: Full rewrite — AgentDashboard (Spotlight + Timeline + Loop Sidebar), StatusPanel with inline context bar, CompletionPanel, accept/reject keybinds, updated footer
+- lib/summary-generator.sh: Rewrote to use `claude --continue` from worktree dir ($5 param), new compact markdown prompt
+- tarvos.sh (ALL_PHASES_COMPLETE block ~1659): Pass `WORKTREE_PATH` to generate_summary; remove worktree after summary
+- tarvos.sh (post-loop ~1715): Release worktree on stopped/failed terminal states
+- tarvos.sh (cmd_accept ~1170): Added "already checked out" error handling with user-friendly message
 
 ## Immediate Next Task
-Begin Phase 3: Fix summary-generator.sh to use `claude --continue` from worktree dir instead of fresh `-p` call. Then Phase 4: worktree auto-cleanup on stopped/failed terminal states.
+Phase 5 and 6 are already complete (done in Phase 2 session). Verify all remaining phases done:
+- Phase 5 (CompletionPanel + accept/reject keybinds): already in RunDashboardScreen.tsx
+- Phase 6 (space efficiency): already done inline with Phase 2
+- Phase 1 (timer fix): check if done in RunDashboardScreen.tsx
 
 ## Key Files for Next Task
-- lib/summary-generator.sh
-- tarvos.sh (run_agent_loop function, ALL_PHASES_COMPLETE block ~lines 1659-1679)
+- tui/src/screens/RunDashboardScreen.tsx (verify Phase 1 timer fix and Phase 5 are complete)
 
 ## Gotchas
-- PRD implementation order: Phase 3 next, then Phase 4, then Phase 6 (space efficiency is already done inline with Phase 2)
-- Phase 6 is essentially complete — dashboardHeight = height - 3, spotlight fixed at 5/9 rows, no wasted spacers
+- Phase 6 is essentially done — dashboardHeight = height - 3 already implemented in Phase 2
+- Phase 5 CompletionPanel already implemented in Phase 2 session
