@@ -1,46 +1,49 @@
 # Tarvos
 
-> Keep your AI coding agent in the green.
+> Run your AI coding plan to completion.
 
-LLMs don't process context uniformly. Performance degrades significantly as input length grows — every major model eventually falls toward random-chance quality as the context fills up. For agentic coding tasks, your agent is quietly getting dumber with every turn.
+AI coding agents slow down as they go. The more context they accumulate, the worse their output gets — a well-known effect across every major model.
+
+**Tarvos** solves this by running a chain of fresh agents on your plan, each one picking up exactly where the last left off. You write the plan once. Tarvos handles the rest.
+
+Run multiple plans at once. Each session gets its own isolated git worktree. When the work is done, accept it to merge, or reject it to discard — without ever touching git yourself.
 
 [![Model performance vs input length](./hero_plot.png)](https://research.trychroma.com/context-rot)
-
-**Tarvos** orchestrates a chain of fresh agents, each picking up exactly where the last one left off — keeping every agent under 100k tokens where reasoning quality is highest.
-
-Run multiple plans concurrently. Each session gets its own isolated git worktree. Accept good work, reject bad experiments — without ever touching git yourself.
 
 ---
 
 ## Quickstart
 
-**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI, `jq`, `bash`, [`bun`](https://bun.sh) (for the TUI)
+**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI, `jq`, `bash`, [`bun`](https://bun.sh)
 
 ```bash
 git clone https://github.com/anomalyco/tarvos.git
 cd tarvos
-./install.sh          # symlinks tarvos → /usr/local/bin/tarvos
-
-# Install TUI dependencies (required for `tarvos tui`)
-cd tui && bun install
+./install.sh          # adds 'tarvos' to /usr/local/bin
+cd tui && bun install # install the session browser UI
 ```
 
-Then from your project repo:
+Then from your project:
 
 ```bash
-tarvos init path/to/your-plan.md --name my-feature
+tarvos init my-plan.md --name my-feature
 tarvos begin my-feature
+tarvos tui             # watch it work
 ```
 
 ---
 
 ## How it works
 
-Write a planning document describing what you want to build — phases, sprints, milestones, a task list, whatever structure makes sense. See [`example.prd.md`](./example.prd.md) for an example.
+1. **Write a plan.** Describe what you want to build — phases, tasks, milestones. Any format works. See [`example.prd.md`](./example.prd.md) for inspiration.
 
-1. **`tarvos init`** reads your plan and creates a named session. `.tarvos/` is automatically added to your `.gitignore`.
-2. **`tarvos begin`** creates a git branch and an isolated worktree under `.tarvos/worktrees/<name>/` and starts the agent loop in the background. Each iteration launches a fresh Claude Code agent. When an agent finishes a phase, a new agent picks up from there. Use **`tarvos tui`** to monitor all sessions.
-3. When the work is done, **`tarvos accept`** merges the branch back and archives the session. If you don't like the result, **`tarvos reject`** deletes it cleanly.
+2. **`tarvos init`** reads your plan, previews it, and creates a session — a named workspace with its own git branch and isolated working directory.
+
+3. **`tarvos begin`** starts the agent in the background. It works through your plan one phase at a time, each fresh agent picking up from a handoff note left by the previous one.
+
+4. **`tarvos tui`** opens the session browser where you can watch progress, view the activity log, and take action when work is done.
+
+5. When done, **`tarvos accept`** merges the changes into your branch and cleans up. **`tarvos reject`** discards everything cleanly if you don't like the result.
 
 ---
 
@@ -48,7 +51,7 @@ Write a planning document describing what you want to build — phases, sprints,
 
 ### `tarvos` / `tarvos tui`
 
-Open the interactive session browser (TypeScript TUI powered by [OpenTUI](https://github.com/anomalyco/opentui) and [Bun](https://bun.sh)). Run `tarvos` with no arguments or `tarvos tui`.
+Open the session browser. Run `tarvos` with no arguments or `tarvos tui`.
 
 ```
 ╭── Sessions ──────────────────────────────── 3 sessions ───╮
@@ -61,95 +64,73 @@ Open the interactive session browser (TypeScript TUI powered by [OpenTUI](https:
 [↑↓] Navigate  [Enter] Open/Actions  [s] Start  [a] Accept  [n] New  [q] Quit
 ```
 
-Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open run view or actions menu, `s` start, `a` accept, `r` reject, `n` new session, `R` refresh, `q` quit.
-
-> **Note:** The TUI requires [Bun](https://bun.sh) and its dependencies to be installed (`cd tui && bun install`). All session monitoring, log streaming, and summary viewing is built into the TUI — no separate terminal windows needed.
+Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open or actions menu, `s` start, `a` accept, `r` reject, `n` new session, `R` refresh, `q` quit.
 
 ---
 
-### `tarvos init <path-to-plan> --name <name> [options]`
+### `tarvos init <plan.md> --name <name> [options]`
 
-Previews the plan and creates a named session under `.tarvos/sessions/<name>/`.
+Read a plan file and create a named session.
 
 | Option | Default | Description |
 |---|---|---|
-| `--name <name>` | required | Unique session name (alphanumeric + hyphens) |
-| `--token-limit N` | `100000` | Token threshold that triggers a handoff to a fresh agent |
-| `--max-loops N` | `50` | Maximum agent iterations before stopping |
-| `--no-preview` | — | Skip the AI preview and create the session immediately |
+| `--name <name>` | required | Session name (alphanumeric + hyphens) |
+| `--token-limit N` | `100000` | How much context an agent uses before handing off |
+| `--max-loops N` | `50` | Maximum number of agent iterations |
+| `--no-preview` | — | Skip the plan preview and create the session immediately |
 
 ---
 
 ### `tarvos begin <name>`
 
-Starts the agent loop for the named session. Creates a `tarvos/<name>-<timestamp>` git branch and runs the agent in an isolated worktree under `.tarvos/worktrees/<name>/`. Requires a clean working directory.
-
-Always runs detached in the background. Use `tarvos tui` or `tarvos attach <name>` to monitor progress.
-
-If the session was previously stopped, `tarvos begin` will prompt you to confirm before discarding progress and starting fresh. Use `tarvos continue` to resume instead.
+Start the agent loop for a session. Always runs in the background — use `tarvos tui` to monitor progress.
 
 ---
 
 ### `tarvos continue <name>`
 
-Resume a stopped session from its existing progress checkpoint. Reuses the existing git branch and worktree — no progress is lost.
-
-Always runs detached in the background. Use `tarvos tui` or `tarvos attach <name>` to monitor progress.
-
-- Only works on sessions in `stopped` status.
-- For `running` sessions, use `tarvos tui` to monitor.
-- For `initialized` sessions, use `tarvos begin` to start fresh.
-
----
-
-### `tarvos attach <name>`
-
-Tail live output of a background session. Press `Ctrl+C` to detach — the session keeps running.
-
----
-
-### `tarvos stop <name>`
-
-Stop a running background session (SIGTERM, then SIGKILL after 2 seconds).
+Resume a stopped session from where it left off. No progress is lost.
 
 ---
 
 ### `tarvos accept <name>`
 
-Merge a completed session's branch into your original branch, archive the session folder, and delete the session branch. Session must have status `done`.
+Merge a completed session's changes into your original branch and clean up. Session must have status `done`.
 
 ---
 
 ### `tarvos reject <name> [--force]`
 
-Delete a session's branch and remove all session data. Use `--force` to skip the confirmation prompt. Session must not be currently running.
+Discard a session — deletes the branch and all its data. Use `--force` to skip the confirmation. Session must not be running.
 
 ---
 
-### `tarvos migrate`
+### `tarvos stop <name>`
 
-Migrate a legacy Tarvos config (`.tarvos/config`) to the current session-based format. Creates a session named `default`, moves any existing `progress.md` into the session folder, and archives the old config as `.tarvos/config.bak`.
+Stop a running session. Resume it later with `tarvos continue`.
+
+---
+
+### `tarvos attach <name>`
+
+Follow the live log of a running session. Press `Ctrl+C` to stop following — the session keeps running.
 
 ---
 
 ## Session lifecycle
 
 ```
-init → begin → [running] → done → accept (merged + archived)
-                                ↘ reject (deleted)
-              → stopped → continue (resume)
-                        ↘ begin   (reset + start fresh — prompts for confirmation)
-                        ↘ reject  (deleted)
+init → begin → [running] → done → accept (changes merged)
+                                ↘ reject (changes discarded)
+             → stopped → continue (resume)
+                       ↘ reject  (discard)
 ```
 
 ---
 
-## State and logs
+## Where things live
 
-Everything lives under `.tarvos/` (automatically gitignored):
+Everything is under `.tarvos/` in your project (automatically gitignored):
 
-- **`sessions/<name>/state.json`** — status, branch, token limit, loop count, timestamps
-- **`sessions/<name>/progress.md`** — written by each agent to hand off context to the next
-- **`sessions/<name>/summary.md`** — generated when all phases complete
-- **`sessions/<name>/logs/`** — per-run logs with raw stream JSON and token usage
-- **`worktrees/<name>/`** — isolated git worktree for the session (removed on accept/reject)
+- **`sessions/<name>/`** — session state, progress handoff notes, summary, logs
+- **`worktrees/<name>/`** — the isolated working directory for each session (removed on accept/reject)

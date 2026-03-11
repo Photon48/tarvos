@@ -48,19 +48,22 @@ CURRENT_SESSION_NAME=""
 # ──────────────────────────────────────────────────────────────
 usage_init() {
     cat <<EOF
-Usage: tarvos init <path-to-prd.md> --name <session-name> [options]
+Usage: tarvos init <plan.md> --name <session-name> [options]
+
+Create a new session from a plan file. Tarvos previews the plan and sets
+up an isolated workspace (git branch + worktree) ready to run.
 
 Options:
   --name <name>       Session name (required, alphanumeric + hyphens)
-  --token-limit <N>   Token limit before forcing handoff (default: ${DEFAULT_TOKEN_LIMIT})
-  --max-loops <N>     Maximum number of loop iterations (default: ${DEFAULT_MAX_LOOPS})
-  --no-preview        Skip the AI preview and write config immediately
+  --token-limit <N>   Max tokens per agent before handing off (default: ${DEFAULT_TOKEN_LIMIT})
+  --max-loops <N>     Max agent iterations before stopping (default: ${DEFAULT_MAX_LOOPS})
+  --no-preview        Skip the plan preview and create the session immediately
   -h, --help          Show this help message
 
 Example:
-  tarvos init ./my-project.prd.md --name auth-feature
-  tarvos init /path/to/project.prd.md --name bugfix --token-limit 80000 --max-loops 20
-  tarvos init ./plan.md --name new-api --no-preview
+  tarvos init ./my-plan.md --name auth-feature
+  tarvos init ./my-plan.md --name bugfix --token-limit 80000
+  tarvos init ./my-plan.md --name new-api --no-preview
 EOF
     exit 0
 }
@@ -69,20 +72,16 @@ usage_begin() {
     cat <<EOF
 Usage: tarvos begin <session-name>
 
+Start the agent loop for a session. Runs in the background — use
+'tarvos tui' or 'tarvos attach <name>' to monitor progress.
+
 Options:
   -h, --help          Show this help message
-
-Behavior:
-  - Requires a clean working directory (no uncommitted changes).
-  - On first run: creates a 'tarvos/<name>-<timestamp>' branch in an isolated
-                  git worktree under .tarvos/worktrees/<name>/.
-  - Always starts the session as a background process (detached mode).
-  - Use 'tarvos tui' or 'tarvos attach <name>' to monitor progress.
 
 Example:
   tarvos begin auth-feature
 
-Run \`tarvos init <prd-path> --name <name>\` first to create a session.
+Run \`tarvos init <plan.md> --name <name>\` first to create a session.
 EOF
     exit 0
 }
@@ -91,19 +90,14 @@ usage_continue() {
     cat <<EOF
 Usage: tarvos continue <session-name>
 
-Resume a stopped session from its existing progress checkpoint.
+Resume a stopped session from where it left off. Picks up from the
+existing progress checkpoint — no work is lost.
 
-Behavior:
-  - Only works on sessions in 'stopped' status.
-  - Reuses the existing git worktree and branch.
-  - Starts the session in background (detached mode).
-  - Use 'tarvos attach <name>' to follow live output.
+Options:
+  -h, --help          Show this help message
 
 Example:
   tarvos continue auth-feature
-
-For running sessions, use 'tarvos tui' to monitor progress.
-For initialized sessions, use 'tarvos begin' to start fresh.
 EOF
     exit 0
 }
@@ -112,8 +106,8 @@ usage_attach() {
     cat <<EOF
 Usage: tarvos attach <session-name>
 
-Tail the live output of a background session.
-Press Ctrl+C to detach — the session continues running in the background.
+Follow the live log output of a running session.
+Press Ctrl+C to stop following — the session keeps running.
 
 Example:
   tarvos attach auth-feature
@@ -164,13 +158,8 @@ usage_accept() {
     cat <<EOF
 Usage: tarvos accept <session-name>
 
-Accept a completed session: merge its branch into the original branch,
-archive the session folder, delete the session branch, and remove it
-from the registry.
-
-Requirements:
-  - Session status must be 'done'
-  - Working directory must be clean (no uncommitted changes)
+Merge a completed session's changes into your branch and clean up.
+Session must have status 'done'.
 
 Example:
   tarvos accept auth-feature
@@ -182,14 +171,11 @@ usage_reject() {
     cat <<EOF
 Usage: tarvos reject <session-name> [--force]
 
-Reject a session: delete its branch and session folder and remove it
-from the registry.
+Discard a session — deletes the branch and all session data.
+The session must not be currently running (use 'tarvos stop' first).
 
 Options:
-  --force     Skip confirmation prompt
-
-Requirements:
-  - Session must not be currently running (stop it first)
+  --force     Skip the confirmation prompt
 
 Example:
   tarvos reject auth-feature
@@ -202,14 +188,8 @@ usage_migrate() {
     cat <<EOF
 Usage: tarvos migrate
 
-Migrate a legacy Tarvos configuration (.tarvos/config) to the session-based
-format introduced in the async ecosystem update.
-
-What it does:
-  - Reads PRD_FILE, TOKEN_LIMIT, and MAX_LOOPS from .tarvos/config
-  - Creates a session named "default" in .tarvos/sessions/default/
-  - Moves progress.md (if it exists) into the session folder
-  - Archives the old config to .tarvos/config.bak
+Upgrade from an older version of Tarvos. Converts the legacy .tarvos/config
+format to the current session-based format.
 
 Example:
   tarvos migrate
@@ -220,38 +200,31 @@ EOF
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
-       tarvos                          Open the session browser TUI
+       tarvos                          Open the session browser
 
-Tarvos orchestrates a chain of fresh AI agents on a single plan, each picking
-up where the last left off. Every session runs on its own isolated git worktree
-— accept good work, reject experiments, without touching git yourself.
+Tarvos runs your AI coding plan to completion. Write a plan, start a session,
+and let it work — each agent hands off to the next so nothing gets lost. When
+you're happy with the result, accept it; if not, reject it and nothing changes.
 
 Commands:
-  init <prd-path> --name <name>   Create a new session
-  begin <name>                    Start session agent loop (always detached)
-  continue <name>                 Resume a stopped session from progress checkpoint
-  attach <name>                   Follow live output of a background session
-  stop <name>                     Stop a running background session
-  tui                             Open the session browser TUI
-  accept <name>                   Merge completed session branch and archive
-  reject <name> [--force]         Delete session branch and remove session
-  migrate                         Migrate legacy .tarvos/config to session format
+  init <plan.md> --name <name>    Create a new session from a plan file
+  begin <name>                    Start a session (runs in the background)
+  continue <name>                 Resume a stopped session
+  tui                             Open the session browser (same as just 'tarvos')
+  attach <name>                   Follow live output of a running session
+  stop <name>                     Stop a running session
+  accept <name>                   Merge the session's changes into your branch
+  reject <name> [--force]         Discard a session and all its changes
+  migrate                         Upgrade from an older Tarvos version
 
-Session lifecycle:
-  init → begin → [running] → done → accept   (branch merged, session archived)
-                                   ↘ reject  (branch + session deleted)
-              → stopped → continue (resume from progress checkpoint)
-                         ↘ begin   (reset + start fresh — prompts for confirmation)
-                         ↘ reject  (deleted)
+Session status:
+  initialized   Ready to start
+  running       Working
+  stopped       Paused — resume with 'tarvos continue'
+  done          Complete — accept or reject
+  failed        Something went wrong — reject and try again
 
-Session status values:
-  initialized   Created, not yet started
-  running       Agent loop is active
-  stopped       Paused (can be resumed with continue)
-  done          All phases complete (ready to accept or reject)
-  failed        Exceeded retries or hit an unrecoverable error
-
-Run \`tarvos <command> --help\` for command-specific options.
+Run \`tarvos <command> --help\` for details on any command.
 EOF
     exit 0
 }
