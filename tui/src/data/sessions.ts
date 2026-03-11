@@ -1,14 +1,14 @@
 import { join } from "path"
 import type { Session } from "../types"
 
-const TARVOS_DIR = join(process.cwd(), ".tarvos", "sessions")
+export const TARVOS_SESSIONS_DIR = join(process.cwd(), ".tarvos", "sessions")
 
 export async function loadSessions(): Promise<Session[]> {
   const sessions: Session[] = []
   try {
     const glob = new Bun.Glob("*/state.json")
-    for await (const file of glob.scan(TARVOS_DIR)) {
-      const text = await Bun.file(join(TARVOS_DIR, file)).text()
+    for await (const file of glob.scan(TARVOS_SESSIONS_DIR)) {
+      const text = await Bun.file(join(TARVOS_SESSIONS_DIR, file)).text()
       sessions.push(JSON.parse(text))
     }
     sessions.sort((a, b) =>
@@ -19,5 +19,5 @@ export async function loadSessions(): Promise<Session[]> {
 }
 
 export function getSessionDir(name: string): string {
-  return join(TARVOS_DIR, name)
+  return join(TARVOS_SESSIONS_DIR, name)
 }

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { theme, statusIcons, statusColors, BRAILLE_SPINNER } from "../theme"
-import { loadSessions, getSessionDir } from "../data/sessions"
+import { loadSessions, getSessionDir, TARVOS_SESSIONS_DIR } from "../data/sessions"
 import { runTarvosCommand } from "../commands"
 import type { Session } from "../types"
+import fs from "fs"
 
 // ─── Action definitions per status ────────────────────────────────────────────
 
@@ -238,23 +239,43 @@ interface ActionOverlayProps {
   onViewSummary: (sessionName: string) => void
   setStatusMessage: (msg: string, isError?: boolean) => void
   onRejectSucceeded: () => void
+  onAcceptSucceeded: (sessionName: string) => void
+  onActionCompleted: () => void
+  pendingActions: Set<string>
+  onPendingStart: (sessionName: string) => void
+  onPendingEnd: (sessionName: string) => void
 }
 
-function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusMessage, onRejectSucceeded }: ActionOverlayProps) {
+function ActionOverlay({
+  session,
+  onClose,
+  onNavigate,
+  onViewSummary,
+  setStatusMessage,
+  onRejectSucceeded,
+  onAcceptSucceeded,
+  onActionCompleted,
+  pendingActions,
+  onPendingStart,
+  onPendingEnd,
+}: ActionOverlayProps) {
   const [selectedAction, setSelectedAction] = useState(0)
   const [loading, setLoading] = useState(false)
   const [showRejectConfirm, setShowRejectConfirm] = useState(false)
   const actions = ACTIONS[session.status] ?? []
+  const isPending = pendingActions.has(session.name)
 
   const doReject = useCallback(async () => {
     setShowRejectConfirm(false)
     setLoading(true)
+    onPendingStart(session.name)
     setStatusMessage(`Running: Reject...`)
     try {
       const { exitCode, stderr } = await runTarvosCommand(["reject", "--force", session.name])
       if (exitCode === 0) {
         setStatusMessage(`✓ Reject succeeded`, false)
         onRejectSucceeded()
+        onActionCompleted()
       } else {
         const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
         setStatusMessage(`✗ Reject failed${detail}`, true)
@@ -263,9 +284,10 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
       setStatusMessage(`✗ Error: ${e}`, true)
     } finally {
       setLoading(false)
+      onPendingEnd(session.name)
       onClose()
     }
-  }, [session, onClose, setStatusMessage, onRejectSucceeded])
+  }, [session, onClose, setStatusMessage, onRejectSucceeded, onActionCompleted, onPendingStart, onPendingEnd])
 
   const executeAction = useCallback(async (action: { label: string; cmd: string[] }) => {
     // View navigates client-side
@@ -287,11 +309,17 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
     }
 
     setLoading(true)
+    onPendingStart(session.name)
     setStatusMessage(`Running: ${action.label}...`)
     try {
       const { exitCode, stderr } = await runTarvosCommand([...action.cmd, session.name])
       if (exitCode === 0) {
         setStatusMessage(`✓ ${action.label} succeeded`, false)
+        // Optimistic accept removal — remove session from list immediately
+        if (action.cmd[0] === "accept") {
+          onAcceptSucceeded(session.name)
+        }
+        onActionCompleted()
       } else {
         const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
         setStatusMessage(`✗ ${action.label} failed${detail}`, true)
@@ -300,9 +328,10 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
       setStatusMessage(`✗ Error: ${e}`, true)
     } finally {
       setLoading(false)
+      onPendingEnd(session.name)
       onClose()
     }
-  }, [session, onClose, onNavigate, onViewSummary, setStatusMessage])
+  }, [session, onClose, onNavigate, onViewSummary, setStatusMessage, onAcceptSucceeded, onActionCompleted, onPendingStart, onPendingEnd])
 
   useKeyboard((key) => {
     if (showRejectConfirm) return  // Let RejectConfirmDialog handle keys
@@ -351,7 +380,7 @@ function ActionOverlay({ session, onClose, onNavigate, onViewSummary, setStatusM
       titleAlignment="center"
       padding={1}
     >
-      {loading ? (
+      {loading || isPending ? (
         <text fg={theme.warning}>Processing...</text>
       ) : (
         <>
@@ -533,10 +562,24 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
   const [statusIsError, setStatusIsError] = useState(false)
   const [showRejectConfirmQuick, setShowRejectConfirmQuick] = useState(false)
   const [loading, setLoading] = useState(true)
+  // 2.2 Pending actions guard: track sessions with in-flight actions
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set())
 
   const setStatusMessage = useCallback((msg: string, isError?: boolean) => {
     setStatusMessageRaw(msg)
     setStatusIsError(isError === true)
+  }, [])
+
+  const handlePendingStart = useCallback((sessionName: string) => {
+    setPendingActions(prev => new Set(prev).add(sessionName))
+  }, [])
+
+  const handlePendingEnd = useCallback((sessionName: string) => {
+    setPendingActions(prev => {
+      const next = new Set(prev)
+      next.delete(sessionName)
+      return next
+    })
   }, [])
 
   const refresh = useCallback(async () => {
@@ -551,6 +594,16 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
     }
   }, [setStatusMessage])
 
+  // 2.1 Optimistic accept removal: remove session immediately on accept
+  const handleAcceptSucceeded = useCallback((sessionName: string) => {
+    setSessions(s => s.filter(x => x.name !== sessionName))
+  }, [])
+
+  // 2.3 Immediate refresh after actions
+  const handleActionCompleted = useCallback(() => {
+    refresh()
+  }, [refresh])
+
   // Initial load
   useEffect(() => {
     refresh()
@@ -560,6 +613,21 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
   useEffect(() => {
     const id = setInterval(refresh, 3000)
     return () => clearInterval(id)
+  }, [refresh])
+
+  // 2.4 Session directory watcher for near-instant status updates
+  useEffect(() => {
+    let watcher: fs.FSWatcher | null = null
+    try {
+      watcher = fs.watch(TARVOS_SESSIONS_DIR, { recursive: true }, () => {
+        refresh()
+      })
+    } catch {
+      // Directory may not exist yet — watcher will be absent, fall back to poll
+    }
+    return () => {
+      watcher?.close()
+    }
   }, [refresh])
 
   // Clear status message after 4 seconds
@@ -573,7 +641,9 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
     const session = sessions[selectedIndex]
     if (!session) return
     setShowRejectConfirmQuick(false)
+    handlePendingStart(session.name)
     const { exitCode, stderr } = await runTarvosCommand(["reject", "--force", session.name])
+    handlePendingEnd(session.name)
     if (exitCode === 0) {
       setStatusMessage(`✓ Rejected ${session.name}`, false)
       refresh()
@@ -581,7 +651,7 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
       const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
       setStatusMessage(`✗ Reject failed${detail}`, true)
     }
-  }, [sessions, selectedIndex, refresh, setStatusMessage])
+  }, [sessions, selectedIndex, refresh, setStatusMessage, handlePendingStart, handlePendingEnd])
 
   // Keyboard handler — only when no overlay is open
   useKeyboard((key) => {
@@ -618,27 +688,35 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
     // Quick actions
     const session = sessions[selectedIndex]
     if (!session) return
+    // Guard: skip quick actions for sessions with in-flight operations
+    if (pendingActions.has(session.name)) return
     if (key.name === "s" && session.status === "initialized") {
+      handlePendingStart(session.name)
       runTarvosCommand(["begin", "--detach", session.name]).then(({ exitCode, stderr }) => {
+        handlePendingEnd(session.name)
         if (exitCode === 0) {
           setStatusMessage(`✓ Started ${session.name}`, false)
         } else {
           const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
           setStatusMessage(`✗ Start failed${detail}`, true)
         }
-        refresh()
+        refresh()  // 2.3 immediate refresh after begin
       })
       return
     }
     if (key.name === "a" && session.status === "done") {
+      handlePendingStart(session.name)
       runTarvosCommand(["accept", session.name]).then(({ exitCode, stderr }) => {
+        handlePendingEnd(session.name)
         if (exitCode === 0) {
           setStatusMessage(`✓ Accepted ${session.name}`, false)
+          // 2.1 Optimistic removal: remove immediately
+          handleAcceptSucceeded(session.name)
         } else {
           const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
           setStatusMessage(`✗ Accept failed${detail}`, true)
         }
-        refresh()
+        refresh()  // 2.3 immediate refresh after accept
       })
       return
     }
@@ -676,6 +754,11 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
           onViewSummary={onViewSummary}
           setStatusMessage={setStatusMessage}
           onRejectSucceeded={refresh}
+          onAcceptSucceeded={handleAcceptSucceeded}
+          onActionCompleted={handleActionCompleted}
+          pendingActions={pendingActions}
+          onPendingStart={handlePendingStart}
+          onPendingEnd={handlePendingEnd}
         />
       ) : null}
 
