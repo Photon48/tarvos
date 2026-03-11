@@ -21,6 +21,7 @@ export interface TuiEvent {
   type: string        // "tool_use" | "text" | "signal" | "status" | "loop_start" | etc.
   content?: string
   tool?: string
+  arg?: string        // tool input argument (file path, command, pattern, etc.)
   tokens?: number
   phase?: string
   signal?: string

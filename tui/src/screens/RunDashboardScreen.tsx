@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useReducer, useRef } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { theme, BRAILLE_SPINNER, statusColors, statusIcons } from "../theme"
+import { theme, BRAILLE_SPINNER, statusColors } from "../theme"
 import { watchLogDir } from "../data/events"
 import { loadSessions, getSessionDir } from "../data/sessions"
 import { runTarvosCommand } from "../commands"
@@ -27,11 +27,11 @@ interface HistoryEntry {
   duration: string
 }
 
-interface LogEntry {
+interface ActionEntry {
   id: number
-  type: string
-  content: string
-  raw?: string
+  icon: string    // "◐" | "✎" | "$" | "⚡" | "◈" | "⊕" | "?"
+  type: string    // "Read" | "Edit" | "Bash" | "Signal" | "Phase" | etc.
+  arg: string     // truncated argument/content
 }
 
 interface RunState {
@@ -43,7 +43,11 @@ interface RunState {
   tokenCount: number
   tokenLimit: number
   history: HistoryEntry[]
-  activityLog: LogEntry[]
+  // New dashboard fields
+  currentTool: string
+  currentArg: string
+  currentText: string
+  recentActions: ActionEntry[]
   scrollOffset: number  // 0 = bottom, positive = scrolled up
   viewMode: "summary" | "raw"
 }
@@ -57,30 +61,22 @@ type RunAction =
   | { type: "TOGGLE_VIEW" }
   | { type: "RESET_SCROLL" }
 
+// ─── Tool icon mapping ────────────────────────────────────────────────────────
+
+const TOOL_ICONS: Record<string, string> = {
+  Read: "◐", Glob: "◐", Grep: "◐",
+  Edit: "✎", Write: "✎", MultiEdit: "✎",
+  Bash: "$",
+  Task: "⊕",
+}
+
+function toolIcon(name: string): string {
+  return TOOL_ICONS[name] ?? "·"
+}
+
 // ─── Reducer ───────────────────────────────────────────────────────────────────
 
 let nextLogId = 0
-
-function formatEvent(event: TuiEvent, viewMode: "summary" | "raw"): string {
-  if (viewMode === "raw" && event.raw) return event.raw
-
-  switch (event.type) {
-    case "tool_use":
-      return `  Tool: ${event.tool ?? "unknown"}`
-    case "text":
-      return `  ${(event.content ?? "").slice(0, 120)}`
-    case "signal":
-      return `  Signal: ${event.signal ?? event.content ?? ""}`
-    case "status":
-      return `  Status → ${event.content ?? ""}`
-    case "tokens":
-      return `  Tokens: ${event.tokens ?? 0}`
-    case "phase":
-      return `  Phase: ${event.phase ?? event.content ?? ""}`
-    default:
-      return `  [${event.type}] ${event.content ?? ""}`
-  }
-}
 
 function reducer(state: RunState, action: RunAction): RunState {
   switch (action.type) {
@@ -101,45 +97,72 @@ function reducer(state: RunState, action: RunAction): RunState {
     }
     case "EVENT": {
       const ev = action.event
-      const logLine: LogEntry = {
-        id: nextLogId++,
-        type: ev.type,
-        content: formatEvent(ev, state.viewMode),
-        raw: ev.raw,
-      }
-      const newLog = [...state.activityLog, logLine].slice(-500)
+      let newState = { ...state }
 
-      let newState = { ...state, activityLog: newLog }
-
-      // Update derived state from event type
       if (ev.type === "tokens" && ev.tokens !== undefined) {
         newState.tokenCount = ev.tokens
       }
+
+      if (ev.type === "text" && ev.content) {
+        // Update currentText (last non-empty text snippet), do NOT add to recentActions
+        newState.currentText = ev.content
+      }
+
+      if (ev.type === "tool_use" && ev.tool) {
+        newState.currentTool = ev.tool
+        newState.currentArg = ev.arg ?? ""
+        const icon = toolIcon(ev.tool)
+        const entry: ActionEntry = {
+          id: nextLogId++,
+          icon,
+          type: ev.tool,
+          arg: ev.arg ?? "",
+        }
+        newState.recentActions = [...state.recentActions, entry].slice(-15)
+      }
+
       if (ev.type === "phase" && (ev.phase ?? ev.content)) {
         newState.currentPhase = ev.phase ?? ev.content ?? state.currentPhase
+        const entry: ActionEntry = {
+          id: nextLogId++,
+          icon: "◈",
+          type: "Phase",
+          arg: newState.currentPhase,
+        }
+        newState.recentActions = [...state.recentActions, entry].slice(-15)
       }
+
       if (ev.type === "signal" && ev.signal) {
         newState.currentSignal = ev.signal
         // Push to history when loop completes
         if (ev.signal === "PHASE_COMPLETE" || ev.signal === "PHASE_IN_PROGRESS" || ev.signal === "ALL_PHASES_COMPLETE") {
-          const entry: HistoryEntry = {
+          const histEntry: HistoryEntry = {
             loop: state.currentLoop,
             signal: ev.signal,
             tokens: state.tokenCount,
             duration: "—",
           }
-          newState.history = [...state.history, entry]
+          newState.history = [...state.history, histEntry]
+          // Push to recentActions with ⚡ icon
+          const actionEntry: ActionEntry = {
+            id: nextLogId++,
+            icon: "⚡",
+            type: "Signal",
+            arg: ev.signal,
+          }
+          newState.recentActions = [...state.recentActions, actionEntry].slice(-15)
         }
       }
+
       if (ev.type === "status") {
         const rawStatus = (ev.content ?? "").toUpperCase()
         if (["IDLE","RUNNING","CONTEXT_LIMIT","CONTINUATION","RECOVERY","DONE","ERROR"].includes(rawStatus)) {
           newState.status = rawStatus as RunStatus
         }
       }
+
       if (ev.type === "loop_start" && ev.loop !== undefined) {
         newState.currentLoop = ev.loop
-        // When a new loop starts, mark as RUNNING
         newState.status = "RUNNING"
       }
 
@@ -183,7 +206,6 @@ function RunHeader({ sessionName, state }: RunHeaderProps) {
   const isDone = state.status === "DONE"
   const isFailed = state.status === "ERROR"
 
-  // Derive owl state from run status
   const owlState: OwlState = isFailed
     ? "error"
     : isDone
@@ -192,7 +214,6 @@ function RunHeader({ sessionName, state }: RunHeaderProps) {
     ? "working"
     : "idle"
 
-  // Use accent band for running, warning for stopped, success for done, error for failed
   const bandBg = isRunning
     ? theme.accent
     : isDone
@@ -203,7 +224,6 @@ function RunHeader({ sessionName, state }: RunHeaderProps) {
     ? theme.warning
     : theme.headerBg
 
-  // For colored bands, use dark text; otherwise use normal
   const textFg = (isRunning || isDone || isFailed || isStopped) ? "#1C1C1C" : theme.normal
   const mutedFg = (isRunning || isDone || isFailed || isStopped) ? "#3C3C3C" : theme.muted
 
@@ -235,39 +255,7 @@ function RunHeader({ sessionName, state }: RunHeaderProps) {
   )
 }
 
-// ─── Context Progress Bar ─────────────────────────────────────────────────────
-
-interface ContextBarProps {
-  tokenCount: number
-  tokenLimit: number
-}
-
-function ContextBar({ tokenCount, tokenLimit }: ContextBarProps) {
-  const { width } = useTerminalDimensions()
-  const labelLeft = "Context: "
-  const labelRight = ` ${tokenCount.toLocaleString()} / ${tokenLimit.toLocaleString()}`
-  const barWidth = Math.max(10, width - labelLeft.length - labelRight.length - 4)
-
-  const ratio = tokenLimit > 0 ? Math.min(1, tokenCount / tokenLimit) : 0
-  const filled = Math.round(ratio * barWidth)
-  const empty = barWidth - filled
-
-  let barColor = theme.success
-  if (ratio > 0.9) barColor = theme.error
-  else if (ratio > 0.7) barColor = theme.warning
-
-  const bar = "█".repeat(filled) + "░".repeat(empty)
-
-  return (
-    <box flexDirection="row" width="100%" paddingX={2} height={1}>
-      <text fg={theme.muted}>{labelLeft}</text>
-      <text fg={barColor}>{bar}</text>
-      <text fg={theme.muted}>{labelRight}</text>
-    </box>
-  )
-}
-
-// ─── Status Panel ─────────────────────────────────────────────────────────────
+// ─── Status Panel (with inline context bar) ──────────────────────────────────
 
 interface StatusPanelProps {
   state: RunState
@@ -278,6 +266,16 @@ function StatusPanel({ state, elapsed }: StatusPanelProps) {
   const spinner = useSpinner()
   const isRunning = state.status === "RUNNING"
   const statusColor = statusColors[state.status.toLowerCase()] ?? theme.normal
+
+  // Inline mini context bar (~20 chars wide)
+  const barWidth = 20
+  const ratio = state.tokenLimit > 0 ? Math.min(1, state.tokenCount / state.tokenLimit) : 0
+  const filled = Math.round(ratio * barWidth)
+  const empty = barWidth - filled
+  let barColor = theme.success
+  if (ratio > 0.9) barColor = theme.error
+  else if (ratio > 0.7) barColor = theme.warning
+  const bar = "█".repeat(filled) + "░".repeat(empty)
 
   return (
     <box
@@ -295,121 +293,196 @@ function StatusPanel({ state, elapsed }: StatusPanelProps) {
           <text fg={theme.info}>{state.currentPhase}</text>
         </>
       ) : null}
-      {state.currentSignal ? (
-        <>
-          <text fg={theme.muted}>  Signal: </text>
-          <text fg={theme.warning}>{state.currentSignal}</text>
-        </>
-      ) : null}
+      <text fg={theme.muted}>  [</text>
+      <text fg={barColor}>{bar}</text>
+      <text fg={theme.muted}>] {state.tokenCount.toLocaleString()}tk</text>
       <box flexGrow={1} />
       <text fg={theme.subtle}>{elapsed}</text>
     </box>
   )
 }
 
-// ─── History Table ─────────────────────────────────────────────────────────────
+// ─── Completion Panel ─────────────────────────────────────────────────────────
 
-interface HistoryTableProps {
-  history: HistoryEntry[]
+interface CompletionPanelProps {
+  session: Session | null
 }
 
-function HistoryTable({ history }: HistoryTableProps) {
-  if (history.length === 0) {
-    return (
-      <box
-        flexDirection="row"
-        width="100%"
-        backgroundColor={theme.panelBg}
-        paddingX={2}
-        height={1}
-      >
-        <text fg={theme.muted}>History: no completed loops yet</text>
-      </box>
-    )
-  }
-
-  // Show only last 3 entries in a single row to save vertical space
-  const recent = history.slice(-3)
+function CompletionPanel({ session }: CompletionPanelProps) {
+  const branch = session?.branch ?? ""
   return (
     <box
-      flexDirection="row"
-      width="100%"
-      backgroundColor={theme.panelBg}
+      border
+      borderStyle="rounded"
+      borderColor={theme.success}
+      flexDirection="column"
       paddingX={2}
-      height={1}
+      paddingY={1}
+      height={9}
     >
-      <text fg={theme.muted}>History: </text>
-      {recent.map((h, i) => (
-        <text key={i} fg={theme.subtle}>
-          {i > 0 ? "  " : ""}L{h.loop}:{h.signal.replace("PHASE_", "").slice(0,4)} ({h.tokens.toLocaleString()}tk)
-        </text>
-      ))}
+      <text fg={theme.success}><strong>✓ All phases complete!</strong></text>
+      <text> </text>
+      <text fg={theme.normal}>Branch: <span fg={theme.info}>{branch}</span></text>
+      <text fg={theme.muted}>Test it: git checkout {branch}</text>
+      <text> </text>
+      <text fg={theme.muted}>Try the changes in the branch before accepting.</text>
+      <text> </text>
+      <box flexDirection="row">
+        <text fg={theme.success}>[a] Accept &amp; merge</text>
+        <text fg={theme.muted}>    </text>
+        <text fg={theme.error}>[r] Reject &amp; discard</text>
+      </box>
     </box>
   )
 }
 
-// ─── Activity Log ─────────────────────────────────────────────────────────────
+// ─── Agent Dashboard ──────────────────────────────────────────────────────────
 
-interface ActivityLogProps {
-  entries: LogEntry[]
-  scrollOffset: number
-  viewMode: "summary" | "raw"
+interface AgentDashboardProps {
+  state: RunState
+  session: Session | null
   height: number
+  terminalWidth: number
 }
 
-function ActivityLog({ entries, scrollOffset, viewMode, height }: ActivityLogProps) {
-  // Calculate visible window: scrollOffset=0 means bottom
-  const total = entries.length
-  const visible = Math.max(1, height)
-  const startIdx = Math.max(0, total - visible - scrollOffset)
-  const endIdx = Math.max(0, total - scrollOffset)
-  const visible_entries = entries.slice(startIdx, endIdx)
+function signalBadge(signal: string): string {
+  if (signal === "ALL_PHASES_COMPLETE") return "✓ ALL DONE"
+  if (signal === "PHASE_COMPLETE") return "✓ COMPLETE"
+  if (signal === "PHASE_IN_PROGRESS") return "⟳ IN PROG"
+  return signal.slice(0, 10)
+}
 
-  const typeColors: Record<string, string> = {
-    tool_use: theme.info,
-    text:     theme.normal,
-    signal:   theme.accent,
-    status:   theme.warning,
-    tokens:   theme.muted,
-    phase:    theme.purple,
-  }
+function signalBadgeColor(signal: string): string {
+  if (signal === "ALL_PHASES_COMPLETE") return theme.accent
+  if (signal === "PHASE_COMPLETE") return theme.success
+  if (signal === "PHASE_IN_PROGRESS") return theme.warning
+  return theme.muted
+}
+
+function iconColor(icon: string): string {
+  if (icon === "◐") return theme.info
+  if (icon === "✎") return theme.success
+  if (icon === "$") return theme.warning
+  if (icon === "◈") return theme.purple
+  if (icon === "⚡") return theme.accent
+  if (icon === "⊕") return theme.normal
+  return theme.muted
+}
+
+function AgentDashboard({ state, session, height, terminalWidth }: AgentDashboardProps) {
+  const spinner = useSpinner()
+  const isRunning = state.status === "RUNNING"
+  const isDone = state.status === "DONE"
+
+  // Spotlight: 9 rows if DONE (CompletionPanel), else 5 rows
+  const spotlightHeight = isDone ? 9 : 5
+  // Timeline header: 1 row
+  const timelineHeaderHeight = 1
+  // Timeline rows = remaining height
+  const timelineHeight = Math.max(0, height - spotlightHeight - timelineHeaderHeight)
+
+  // Trim recentActions to fit timeline
+  const visibleActions = state.recentActions.slice(-timelineHeight)
+
+  // Sidebar scrollbox height
+  const sidebarContentHeight = Math.max(4, height - 2)
 
   return (
-    <box
-      flexDirection="column"
-      flexGrow={1}
-      width="100%"
-      backgroundColor="#1C1C1C"
-    >
-      {/* Column header */}
-      <box
-        flexDirection="row"
-        width="100%"
-        backgroundColor={theme.panelBg}
-        paddingX={2}
-        height={1}
-      >
-        <text fg={theme.muted}>
-          Activity Log{viewMode === "raw" ? " [raw]" : ""} — {total} events{scrollOffset > 0 ? ` (↑ scrolled ${scrollOffset})` : ""}
-        </text>
-      </box>
-      {/* Log entries */}
-      {visible_entries.length === 0 ? (
-        <box flexGrow={1} justifyContent="center" alignItems="center">
-          <text fg={theme.muted}>Waiting for events...</text>
+    <box flexDirection="row" height={height} width="100%">
+      {/* Left panel: spotlight + timeline */}
+      <box flexDirection="column" flexGrow={1} backgroundColor="#1C1C1C">
+        {/* Spotlight / Completion Panel */}
+        {isDone ? (
+          <CompletionPanel session={session} />
+        ) : (
+          <box
+            border
+            borderStyle="rounded"
+            height={spotlightHeight}
+            paddingX={1}
+            backgroundColor="#1C1C1C"
+          >
+            {state.currentTool ? (
+              <>
+                <text fg={theme.muted}>CURRENTLY:  <span fg={theme.info}>{toolIcon(state.currentTool)} {state.currentTool}</span>  <span fg={theme.accent}>{state.currentArg}</span></text>
+                <text> </text>
+                <text fg={theme.muted}>{state.currentText.slice(0, Math.max(10, terminalWidth - 34))}</text>
+              </>
+            ) : (
+              <>
+                <text fg={theme.muted}>Waiting for agent to start...</text>
+              </>
+            )}
+          </box>
+        )}
+
+        {/* Timeline header */}
+        <box height={1} paddingX={1} backgroundColor={theme.panelBg}>
+          <text fg={theme.muted}>Recent Actions — {state.recentActions.length}</text>
         </box>
-      ) : (
+
+        {/* Timeline rows */}
         <box flexDirection="column" flexGrow={1} width="100%">
-          {visible_entries.map((entry) => {
-            const color = typeColors[entry.type] ?? theme.subtle
-            return (
-              <box key={entry.id} flexDirection="row" width="100%" paddingX={1} height={1}>
-                <text fg={color}>{entry.content}</text>
-              </box>
-            )
-          })}
+          {visibleActions.length === 0 ? (
+            <box flexGrow={1} justifyContent="center" alignItems="center">
+              <text fg={theme.muted}>No actions yet...</text>
+            </box>
+          ) : (
+            visibleActions.map((action) => {
+              const ic = iconColor(action.icon)
+              const typeColor = ic
+              const maxArgLen = Math.max(10, terminalWidth - 34 - 12)
+              return (
+                <box key={action.id} flexDirection="row" height={1} paddingX={1}>
+                  <text fg={ic}>{action.icon}</text>
+                  <text fg={theme.muted}> </text>
+                  <text fg={typeColor}>{action.type.padEnd(10)}</text>
+                  <text fg={theme.subtle}>{action.arg.slice(0, maxArgLen)}</text>
+                </box>
+              )
+            })
+          )}
         </box>
-      )}
+      </box>
+
+      {/* Right panel: Loop sidebar */}
+      <box
+        flexDirection="column"
+        width={30}
+        backgroundColor={theme.panelBg}
+        border
+        borderStyle="single"
+        borderColor={theme.muted}
+        title="Loops"
+        titleAlignment="center"
+      >
+        {state.history.length === 0 && !isRunning ? (
+          <box flexGrow={1} justifyContent="center" alignItems="center">
+            <text fg={theme.muted}>No loops yet</text>
+          </box>
+        ) : (
+          <box flexDirection="column" height={sidebarContentHeight} overflow="hidden">
+            {state.history.map((h, i) => (
+              <box key={i} flexDirection="column" paddingX={1}>
+                <box flexDirection="row" height={1}>
+                  <text fg={theme.muted}>L{h.loop} </text>
+                  <text fg={signalBadgeColor(h.signal)}>{signalBadge(h.signal)}</text>
+                </box>
+                <box flexDirection="row" height={1}>
+                  <text fg={theme.subtle}>  {h.tokens.toLocaleString()}tk · {h.duration}</text>
+                </box>
+              </box>
+            ))}
+            {/* Current running loop indicator */}
+            {isRunning && (
+              <box flexDirection="row" height={1} paddingX={1}>
+                <text fg={theme.muted}>L{state.currentLoop} </text>
+                <text fg={theme.info}>{spinner} running</text>
+              </box>
+            )}
+          </box>
+        )}
+      </box>
     </box>
   )
 }
@@ -417,15 +490,15 @@ function ActivityLog({ entries, scrollOffset, viewMode, height }: ActivityLogPro
 // ─── Footer ───────────────────────────────────────────────────────────────────
 
 interface RunFooterProps {
-  viewMode: "summary" | "raw"
   statusMessage: string
   statusIsError: boolean
   runStatus: RunStatus
 }
 
-function RunFooter({ viewMode, statusMessage, statusIsError, runStatus }: RunFooterProps) {
+function RunFooter({ statusMessage, statusIsError, runStatus }: RunFooterProps) {
   const isRunning = runStatus === "RUNNING"
   const isStopped = (runStatus as string) === "STOPPED" || runStatus === "IDLE"
+  const isDone = runStatus === "DONE"
 
   return (
     <box
@@ -437,6 +510,8 @@ function RunFooter({ viewMode, statusMessage, statusIsError, runStatus }: RunFoo
     >
       {statusMessage ? (
         <text fg={statusIsError ? theme.error : theme.success}>{statusMessage}</text>
+      ) : isDone ? (
+        <text fg={theme.muted}>[a] Accept  [r] Reject  [q] Back</text>
       ) : (
         <text fg={theme.muted}>
           [↑↓] Scroll  [v] Toggle raw  {isRunning ? "[s] Stop  " : ""}{isStopped ? "[c] Continue  " : ""}[q] Back
@@ -456,11 +531,13 @@ interface RunDashboardScreenProps {
 
 export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDashboardScreenProps) {
   const renderer = useRenderer()
-  const { height } = useTerminalDimensions()
+  const { height, width } = useTerminalDimensions()
   const [statusMessage, setStatusMessageRaw] = useState("")
   const [statusIsError, setStatusIsError] = useState(false)
   const [elapsed, setElapsed] = useState("0s")
   const startTimeRef = useRef(Date.now())
+  const [rejectPending, setRejectPending] = useState(false)
+  const rejectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setStatusMessage = (msg: string, isError?: boolean) => {
     setStatusMessageRaw(msg)
@@ -476,7 +553,10 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     tokenCount: 0,
     tokenLimit: 200000,
     history: [],
-    activityLog: [],
+    currentTool: "",
+    currentArg: "",
+    currentText: "",
+    recentActions: [],
     scrollOffset: 0,
     viewMode: "summary",
   })
@@ -515,8 +595,6 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
   }, [sessionDir, refreshSession])
 
   // Watch the entire logDir for events across all loops.
-  // If log_dir is not yet set (session just started), poll state.json every 500ms
-  // for up to 15s until log_dir is populated, then attach the watcher.
   const logDirWatcherRef = useRef<(() => void) | null>(null)
   const logDirPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -558,7 +636,6 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
           if (found?.log_dir) {
             clearInterval(logDirPollRef.current!)
             logDirPollRef.current = null
-            // Update session state and attach watcher
             dispatch({ type: "SESSION_LOADED", session: found })
             attachWatcher(found.log_dir)
           }
@@ -606,12 +683,19 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
     return () => clearInterval(id)
   }, [session?.started_at, session?.status, session?.last_activity])
 
-  // Clear status message
+  // Clear status message after 4s
   useEffect(() => {
     if (!statusMessage) return
     const id = setTimeout(() => setStatusMessageRaw(""), 4000)
     return () => clearTimeout(id)
   }, [statusMessage])
+
+  // Cleanup reject timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current)
+    }
+  }, [])
 
   // Keyboard handler
   useKeyboard((key) => {
@@ -665,30 +749,63 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
       })
       return
     }
-    if (key.name === "r") {
-      refreshSession()
-      setStatusMessage("Refreshed", false)
+    // Accept keybind — only when DONE
+    if (key.name === "a" && runState.status === "DONE") {
+      setStatusMessage("Accepting session...", false)
+      runTarvosCommand(["accept", sessionName]).then(({ exitCode, stderr }) => {
+        if (exitCode === 0) {
+          setStatusMessage("✓ Accepted and merged", false)
+          setTimeout(() => onBack(), 1500)
+        } else {
+          const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+          setStatusMessage(`✗ Accept failed${detail}`, true)
+        }
+      })
+      return
+    }
+    // Reject keybind — double-press confirm, only when DONE
+    if (key.name === "r" && runState.status === "DONE") {
+      if (rejectPending) {
+        // Second press: execute reject
+        if (rejectTimeoutRef.current) clearTimeout(rejectTimeoutRef.current)
+        setRejectPending(false)
+        setStatusMessage("Rejecting session...", false)
+        runTarvosCommand(["reject", sessionName]).then(({ exitCode, stderr }) => {
+          if (exitCode === 0) {
+            setStatusMessage("✓ Session rejected", false)
+            setTimeout(() => onBack(), 1500)
+          } else {
+            const detail = stderr ? `: ${stderr}` : ` (exit ${exitCode})`
+            setStatusMessage(`✗ Reject failed${detail}`, true)
+          }
+        })
+      } else {
+        // First press: arm confirm
+        setRejectPending(true)
+        setStatusMessage("Press [r] again to confirm rejection", false)
+        rejectTimeoutRef.current = setTimeout(() => {
+          setRejectPending(false)
+          setStatusMessageRaw("")
+        }, 3000)
+      }
       return
     }
   })
 
-  // Reserve rows: header(1) + context_bar(1) + status_panel(1) + history(1) + footer(1) + log_header(1) = 6
-  const logHeight = Math.max(4, height - 6)
+  // Layout budget: header(1) + status(1) + footer(1) = 3 fixed rows
+  const dashboardHeight = Math.max(10, height - 3)
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor="#1C1C1C">
       <RunHeader sessionName={sessionName} state={runState} />
       <StatusPanel state={runState} elapsed={elapsed} />
-      <ContextBar tokenCount={runState.tokenCount} tokenLimit={runState.tokenLimit} />
-      <HistoryTable history={runState.history} />
-      <ActivityLog
-        entries={runState.activityLog}
-        scrollOffset={runState.scrollOffset}
-        viewMode={runState.viewMode}
-        height={logHeight}
+      <AgentDashboard
+        state={runState}
+        session={session}
+        height={dashboardHeight}
+        terminalWidth={width}
       />
       <RunFooter
-        viewMode={runState.viewMode}
         statusMessage={statusMessage}
         statusIsError={statusIsError}
         runStatus={runState.status}

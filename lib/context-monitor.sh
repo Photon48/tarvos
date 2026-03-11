@@ -101,7 +101,12 @@ process_stream() {
                     local tool_events
                     tool_events=$(echo "$line" | jq -c '
                         if .message.content then
-                            .message.content[] | select(.type == "tool_use") | {type:"tool_use", tool:.name, input:((.input | tostring)[0:80]), id:.id}
+                            .message.content[] | select(.type == "tool_use") | {
+                                type: "tool_use",
+                                tool: .name,
+                                arg: ((.input.file_path // .input.command // .input.pattern // .input.description // "") | .[0:80]),
+                                id: .id
+                            }
                         else
                             empty
                         end
