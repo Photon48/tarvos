@@ -1,23 +1,23 @@
 # Progress Report
 
 ## Current Status
-Phase 1 of 4: Session List Screen
+Phase 2 of 4: Run Dashboard Screen
 Status: COMPLETED
 
 ## What Was Done This Session
-- tui/src/screens/SessionListScreen.tsx: Full screen — Header, SessionTable, SessionRow, ActionOverlay, NewSessionForm, Footer
-- tui/src/App.tsx: Updated to route between screens using useState; SessionListScreen wired in
+- tui/src/screens/RunDashboardScreen.tsx: Full screen — RunHeader, StatusPanel, ContextBar, HistoryTable, ActivityLog, RunFooter
+- tui/src/App.tsx: Wired RunDashboardScreen; navigates to it when a session is "attached" from ActionOverlay
 
 ## Immediate Next Task
-Begin Phase 2: Build RunDashboardScreen (tui/src/screens/RunDashboardScreen.tsx).
-Wire it into App.tsx when a session is "attached" from the ActionOverlay.
+Begin Phase 3: Build SummaryScreen (tui/src/screens/SummaryScreen.tsx).
+Wire it into App.tsx as screen === "summary". Navigate to it from RunDashboardScreen or SessionListScreen "View Summary" action.
 
 ## Key Files for Next Task
-- tui/src/screens/RunDashboardScreen.tsx (create)
-- tui/src/App.tsx (update to render RunDashboardScreen when state.screen === "run")
-- tui/src/data/events.ts
+- tui/src/screens/SummaryScreen.tsx (create)
+- tui/src/App.tsx (add "summary" screen + sessionName state)
+- tui/src/screens/SessionListScreen.tsx (ActionOverlay "View Summary" cmd → navigate to summary)
 
 ## Gotchas
 - bun is at /Users/rishugoyal/.bun/bin/bun
-- `position="absolute"` works on <box> for overlays
-- Multiple useKeyboard hooks fire simultaneously — the SessionListScreen guards with `if (showOverlay || showNewForm) return`; ActionOverlay's useKeyboard fires too. This is fine since parent returns early.
+- `tsc --noEmit` passes cleanly; `bun build --target bun` also clean
+- The "View Summary" action in ActionOverlay currently calls `runTarvosCommand(["summary", name])` — change it to navigate to SummaryScreen instead

@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { SessionListScreen } from "./screens/SessionListScreen"
+import { RunDashboardScreen } from "./screens/RunDashboardScreen"
 
 type Screen = "list" | "run"
 
@@ -23,10 +24,9 @@ export function App() {
     return <SessionListScreen onNavigate={navigateToRun} />
   }
 
-  // Phase 2: RunDashboardScreen — show list until implemented
-  // navigateToList is used as back-navigation callback in Phase 2
-  void navigateToList
-  return (
-    <SessionListScreen onNavigate={navigateToRun} />
-  )
+  if (state.screen === "run" && state.sessionName) {
+    return <RunDashboardScreen sessionName={state.sessionName} onBack={navigateToList} />
+  }
+
+  return <SessionListScreen onNavigate={navigateToRun} />
 }
