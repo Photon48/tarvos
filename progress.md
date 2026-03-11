@@ -1,31 +1,23 @@
 # Progress Report
 
 ## Current Status
-Phase 0 of 4: Project Setup
+Phase 1 of 4: Session List Screen
 Status: COMPLETED
 
 ## What Was Done This Session
-- tui/package.json: Created with @opentui/react, @opentui/core, react deps
-- tui/tsconfig.json: Configured with jsxImportSource @opentui/react
-- tui/src/theme.ts: Brand colors, statusIcons, statusColors, BRAILLE_SPINNER
-- tui/src/types.ts: Session, SessionStatus, TuiEvent types
-- tui/src/data/sessions.ts: loadSessions(), getSessionDir() using Bun.Glob
-- tui/src/data/events.ts: watchEventsFile() using fs.watch + Bun.file
-- tui/src/commands.ts: runTarvosCommand() using Bun.spawn
-- tui/src/App.tsx: Minimal placeholder app (header + loading message + footer)
-- tui/src/index.tsx: Entry point with createCliRenderer + createRoot
-- tarvos.sh: cmd_tui() and main() no-arg path now exec bun run tui/src/index.tsx
+- tui/src/screens/SessionListScreen.tsx: Full screen — Header, SessionTable, SessionRow, ActionOverlay, NewSessionForm, Footer
+- tui/src/App.tsx: Updated to route between screens using useState; SessionListScreen wired in
 
 ## Immediate Next Task
-Begin Phase 1: Build the SessionListScreen. Create tui/src/screens/SessionListScreen.tsx
-with the full component tree: Header, SessionTable, SessionRow, ActionOverlay, NewSessionForm, Footer.
-Wire up loadSessions(), keyboard navigation (j/k/Enter/Esc/n/q), and auto-refresh.
+Begin Phase 2: Build RunDashboardScreen (tui/src/screens/RunDashboardScreen.tsx).
+Wire it into App.tsx when a session is "attached" from the ActionOverlay.
 
 ## Key Files for Next Task
-- tui/src/screens/SessionListScreen.tsx (create)
-- tui/src/App.tsx (update to render SessionListScreen instead of placeholder)
-- tui/src/data/sessions.ts
+- tui/src/screens/RunDashboardScreen.tsx (create)
+- tui/src/App.tsx (update to render RunDashboardScreen when state.screen === "run")
+- tui/src/data/events.ts
 
 ## Gotchas
-- bun is at /Users/rishugoyal/.bun/bin/bun (not in PATH for this shell)
-- React 19 is installed (not 18); types are @types/react@19
+- bun is at /Users/rishugoyal/.bun/bin/bun
+- `position="absolute"` works on <box> for overlays
+- Multiple useKeyboard hooks fire simultaneously — the SessionListScreen guards with `if (showOverlay || showNewForm) return`; ActionOverlay's useKeyboard fires too. This is fine since parent returns early.

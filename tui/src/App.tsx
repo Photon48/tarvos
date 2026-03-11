@@ -1,49 +1,32 @@
-import { useRenderer } from "@opentui/react"
-import { useKeyboard } from "@opentui/react"
+import { useState } from "react"
+import { SessionListScreen } from "./screens/SessionListScreen"
+
+type Screen = "list" | "run"
+
+interface AppState {
+  screen: Screen
+  sessionName?: string
+}
 
 export function App() {
-  const renderer = useRenderer()
+  const [state, setState] = useState<AppState>({ screen: "list" })
 
-  useKeyboard((key) => {
-    if (key.name === "q" || (key.ctrl && key.name === "c")) {
-      renderer.destroy()
-    }
-  })
+  const navigateToRun = (sessionName: string) => {
+    setState({ screen: "run", sessionName })
+  }
 
+  const navigateToList = () => {
+    setState({ screen: "list" })
+  }
+
+  if (state.screen === "list") {
+    return <SessionListScreen onNavigate={navigateToRun} />
+  }
+
+  // Phase 2: RunDashboardScreen — show list until implemented
+  // navigateToList is used as back-navigation callback in Phase 2
+  void navigateToList
   return (
-    <box
-      flexDirection="column"
-      width="100%"
-      height="100%"
-      backgroundColor="#1C1C1C"
-    >
-      <box
-        flexDirection="row"
-        width="100%"
-        backgroundColor="#5F00AF"
-        padding={1}
-      >
-        <text fg="#D75FAF">
-          <strong>TARVOS</strong>
-        </text>
-        <text fg="#D0D0D0"> — Session Manager</text>
-      </box>
-      <box
-        flexGrow={1}
-        flexDirection="column"
-        justifyContent="center"
-        alignItems="center"
-      >
-        <text fg="#D0D0D0">Loading sessions...</text>
-      </box>
-      <box
-        flexDirection="row"
-        width="100%"
-        backgroundColor="#303030"
-        padding={1}
-      >
-        <text fg="#585858">[q] Quit</text>
-      </box>
-    </box>
+    <SessionListScreen onNavigate={navigateToRun} />
   )
 }
