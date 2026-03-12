@@ -69,9 +69,9 @@ Tarvos creates an isolated git branch, runs fresh agents phase by phase, and wri
 
 ## Commands
 
-### `tarvos` / `tarvos tui`
+### `tarvos tui`
 
-Open the session browser. Run `tarvos` with no arguments or `tarvos tui`.
+Open the interactive session browser.
 
 ```
 ╭── Sessions ──────────────────────────────── 3 sessions ───╮
@@ -209,20 +209,24 @@ Everything is under `.tarvos/` in your project (automatically gitignored):
 
 ## Development
 
-To work on Tarvos itself you need [`bun`](https://bun.sh) to rebuild the TUI binary.
-
-### Rebuild the TUI
+See [DEVELOPER.md](DEVELOPER.md) for the full guide. Quick summary:
 
 ```bash
-cd tui && bun install
-bun run build:darwin-arm64   # or build:darwin-x64, build:linux-x64, build:linux-arm64, build:all
+git clone https://github.com/Photon48/tarvos.git
+cd tarvos
+
+# test shell changes immediately — no build needed
+tarvos-dev init my-plan.md --name test
+
+# build the TUI for your platform, then test
+cd tui && bun install && bun run build:darwin-arm64
+tarvos-dev tui
+
+# auto-rebuild TUI on every save
+cd tui && bun run watch
 ```
 
-Test your local build without reinstalling:
-
-```bash
-TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" tarvos tui
-```
+`tarvos-dev` is completely separate from the installed `tarvos` — production is never touched.
 
 ### Release process
 

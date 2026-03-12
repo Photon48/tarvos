@@ -9,7 +9,7 @@
 | `bash` | Core runtime for `tarvos.sh` and `lib/` |
 | `git` | Version control |
 
-> `jq` and `bun` are **not** required for end-users — they are bundled automatically by the installer. Bun is only needed when you want to modify or rebuild the TUI.
+> `jq` is **not** required for contributors — it is bundled automatically by the installer. Bun is only needed when modifying or rebuilding the TUI.
 
 ---
 
@@ -26,75 +26,54 @@ cd tarvos
 
 There are two completely separate tarvos runtimes on your machine. They never interfere with each other.
 
-| Command | Which tarvos runs | How to upgrade |
-|---------|------------------|----------------|
-| `tarvos` | `~/.local/share/tarvos/tarvos.sh` (the installed release) | `tarvos update` |
-| `./tarvos-dev.sh` | `<your-repo>/tarvos.sh` (your local git branch) | `git checkout <branch>` |
+| Command | Runs | Source |
+|---------|------|--------|
+| `tarvos` | production release | `~/.local/share/tarvos/tarvos.sh` |
+| `tarvos-dev` | your local repo | `<your-repo>/tarvos.sh` |
 
-**Production** (`tarvos`) is installed by the one-liner and lives entirely under `~/.local/share/tarvos/`. It is never touched by edits to your repo. Run `tarvos update` to pull a new release.
+**Production** (`tarvos`) is installed by the one-liner and lives entirely under `~/.local/share/tarvos/`. Editing your repo has zero effect on it. Run `tarvos update` to pull a new release.
 
-**Development** (`./tarvos-dev.sh`) is a thin wrapper checked into the repo. It always runs the `tarvos.sh` in the repo root — whatever branch you are currently on. No install step, no env vars, immediate feedback.
+**Development** (`tarvos-dev`) is a thin wrapper in the repo that always runs whatever branch is currently checked out. No install step, no env vars needed.
 
 ```bash
-# production (stable, downloaded release)
+# production — stable release
 tarvos init my-plan.md --name my-feature
 
-# development (your local branch, whatever state it's in)
-./tarvos-dev.sh init my-plan.md --name my-feature
+# development — your local branch
+tarvos-dev init my-plan.md --name my-feature
 ```
 
-Each invocation prints a small banner to stderr so it is always obvious which runtime you are using:
+Every `tarvos-dev` invocation prints a banner to stderr so it is always obvious which runtime and branch is active:
 
 ```
-[tarvos-dev] repo: /Users/you/Documents/tarvos
-[tarvos-dev] branch: my-experimental-branch
+[tarvos-dev] repo: /your/path/to/tarvos
+[tarvos-dev] branch: my-feature-branch
+[tarvos-dev] TUI: local build (darwin-arm64)
 ```
 
-### Putting tarvos-dev on PATH (optional)
-
-If you want to type `tarvos-dev` instead of `./tarvos-dev.sh` from any directory:
+### Putting tarvos-dev on PATH
 
 ```bash
 mkdir -p ~/bin
 ln -sf "$PWD/tarvos-dev.sh" ~/bin/tarvos-dev
 ```
 
-Then add `~/bin` to your PATH. Add this line to `~/.bashrc` (bash) or `~/.zshrc` (zsh):
+Add `~/bin` to your PATH in `~/.bashrc` (bash) or `~/.zshrc` (zsh):
 
 ```bash
 export PATH="$HOME/bin:$PATH"
 ```
 
-Reload your shell:
+Then reload: `source ~/.bashrc` or `source ~/.zshrc`.
 
-```bash
-source ~/.bashrc   # or source ~/.zshrc
-```
-
-> **macOS note:** On macOS, interactive bash sessions load `~/.bash_profile` instead of `~/.bashrc`. If your `.bash_profile` doesn't already source `.bashrc`, add the export there instead.
-
-The symlink is to the absolute path of the script, so it continues to point at your repo regardless of where you call it from.
-
-### Shared bundled dependencies
-
-Both runtimes share the same bundled `jq` and TUI binaries at `~/.local/share/tarvos/bin/`. This is intentional — you only need one copy of the native binaries. If you are actively developing the TUI itself, see the TUI section below for how to override the binary per-invocation.
-
----
-
-### Production install (one-liner)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
-```
-
-This downloads jq and the prebuilt TUI binary into `~/.local/share/tarvos/bin/`, extracts `tarvos.sh` + `lib/` there, and symlinks `tarvos` into `/usr/local/bin`.
+> **macOS bash note:** Interactive bash sessions on macOS load `~/.bash_profile` instead of `~/.bashrc`. Make sure your `.bash_profile` sources `.bashrc`, or add the export there directly.
 
 ---
 
 ## Project Layout
 
 ```
-tarvos.sh          # main CLI entry point
+tarvos.sh              # main CLI entry point
 lib/
   session-manager.sh   # session state, git worktrees
   context-monitor.sh   # token counting, phase handoffs
@@ -111,25 +90,34 @@ tarvos-skill/
 
 ---
 
+## Working on tarvos.sh / lib/
+
+The shell scripts run directly — no compilation step. Edit and test immediately:
+
+```bash
+# edit tarvos.sh or lib/*.sh, then test instantly from any project:
+tarvos-dev init my-plan.md --name test
+
+# switch branches and test without reinstalling:
+git checkout my-experimental-branch
+tarvos-dev begin test
+```
+
+The production `tarvos` command is never affected. Both can run simultaneously.
+
+---
+
 ## Working on the TUI
 
 The TUI uses [`@opentui/core`](https://github.com/anomalyco/opentui) with a React reconciler. It **must** be compiled with `bun build --compile` — it cannot run under Node.js because it uses `bun:ffi` for native rendering.
 
-### Install dependencies
+### First-time setup
 
 ```bash
 cd tui && bun install
 ```
 
-### Run in dev mode (without compiling)
-
-```bash
-cd tui && bun run dev
-# or
-cd tui && bun run start
-```
-
-### Build a binary for your platform
+### Build for your platform (one-off)
 
 ```bash
 cd tui
@@ -137,66 +125,47 @@ bun run build:darwin-arm64   # macOS Apple Silicon
 bun run build:darwin-x64     # macOS Intel
 bun run build:linux-x64      # Linux x86_64
 bun run build:linux-arm64    # Linux ARM64
-bun run build:all             # all platforms
 ```
 
 Output lands in `tui/dist/`.
 
-### Auto-rebuild on file changes
+### Iterating — auto-rebuild on every save
 
-While iterating on the TUI, run the watch script in a separate terminal. It rebuilds the binary automatically whenever any source file changes:
+Run the watch script in a dedicated terminal. It rebuilds the binary automatically whenever any source file changes:
 
 ```bash
 cd tui && bun run watch
 ```
 
-Once a binary exists in `tui/dist/`, `tarvos-dev` picks it up automatically — no env var needed. You'll see this in the banner:
+### How tarvos-dev uses the local build
+
+`tarvos-dev` **requires** a local TUI build in `tui/dist/` for your platform. It never falls back to the production binary — they are completely separate. If no local build exists, you get a clear error:
 
 ```
-[tarvos-dev] TUI: local build (darwin-arm64)
+[tarvos-dev] ERROR: no local TUI binary found for darwin-arm64
+[tarvos-dev] Build it first:
+  cd .../tarvos/tui && bun run build:darwin-arm64
+  # or to auto-rebuild on every save:
+  cd .../tarvos/tui && bun run watch
 ```
 
-If `tui/dist/` has no binary for your platform, `tarvos-dev` falls back to the production binary silently.
+Once built, `tarvos-dev tui` picks it up automatically — no env vars required.
 
-### Test your local TUI build without reinstalling
-
-`tarvos-dev` auto-detects a local build in `tui/dist/` for your platform. Just build once (or run `watch`) and then use `tarvos-dev` normally — no extra env vars required:
+### Typical TUI dev workflow
 
 ```bash
-# terminal 1 — rebuild on every save
+# terminal 1 — leave running while you work
 cd tui && bun run watch
 
 # terminal 2 — test from any project
 tarvos-dev tui
 ```
 
-To force a specific binary path, `TUI_BIN_PATH` still works as an explicit override:
+To force a specific binary, `TUI_BIN_PATH` still works as an explicit override:
 
 ```bash
 TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" tarvos-dev tui
 ```
-
-`tarvos-dev` resolves the TUI binary in this order:
-1. `$TUI_BIN_PATH` env var (explicit override)
-2. `tui/dist/tui-<os>-<arch>` in the repo (auto-detected local build)
-3. `~/.local/share/tarvos/bin/tui` (production binary fallback)
-
----
-
-## Working on `tarvos.sh` / `lib/`
-
-The scripts run directly — no compilation needed. Edit and run immediately via `tarvos-dev.sh`:
-
-```bash
-# edit tarvos.sh or lib/*.sh, then test instantly:
-./tarvos-dev.sh <subcommand>
-
-# switch to a different branch and test it without any reinstall:
-git checkout my-experimental-branch
-./tarvos-dev.sh begin my-session
-```
-
-The production `tarvos` command is never affected. Both can run simultaneously against different sessions.
 
 ---
 
@@ -206,7 +175,7 @@ The production `tarvos` command is never affected. Both can run simultaneously a
 bash tests/smoke-test.sh
 ```
 
-The smoke tests exercise `init`, `begin`, `stop`, `continue`, `accept`, `reject`, and `forget` against a temporary git repo. All 19 tests should pass. Tests mock `claude` so no real API calls are made.
+Exercises `init`, `begin`, `stop`, `continue`, `accept`, `reject`, and `forget` against a temporary isolated git repo. All 19 tests must pass. `claude` is mocked — no real API calls are made.
 
 ---
 
@@ -215,7 +184,7 @@ The smoke tests exercise `init`, `begin`, `stop`, `continue`, `accept`, `reject`
 ### 1. Verify everything works
 
 ```bash
-bash tests/smoke-test.sh   # all 19 tests pass
+bash tests/smoke-test.sh
 ```
 
 ### 2. Tag the release
@@ -232,14 +201,14 @@ GitHub Actions (`.github/workflows/release.yml`) triggers on the tag and:
 - Packages `tarvos.sh`, `lib/`, and `tarvos-skill/` into `tarvos-v0.2.0.tar.gz`
 - Creates a GitHub Release and uploads all assets
 
-### 3. Update the pinned version in `install.sh`
+### 3. Update the pinned version in install.sh
 
 ```bash
 # in install.sh, update:
 TARVOS_VERSION="v0.2.0"
 ```
 
-Commit and push to `main`:
+Commit and push:
 
 ```bash
 git add install.sh
@@ -255,10 +224,9 @@ Users can now run `tarvos update` or re-run the one-liner to get the new version
 
 1. Fork or branch from `main`
 2. Make your changes
-3. Run `bash tests/smoke-test.sh` — all tests must pass
-4. If you changed the TUI, build it locally and verify: `TUI_BIN_PATH=tui/dist/tui-darwin-arm64 tarvos tui`
-5. Open a PR against `main` — CI will run smoke tests automatically
-6. Once merged, follow the release steps above to cut a new version
+3. Run `bash tests/smoke-test.sh` — all 19 tests must pass
+4. If you changed the TUI, build it and verify: `cd tui && bun run build:darwin-arm64 && tarvos-dev tui`
+5. Open a PR against `main` — CI runs smoke tests automatically
 
 ---
 
@@ -266,6 +234,6 @@ Users can now run `tarvos update` or re-run the one-liner to get the new version
 
 | Variable | Effect |
 |----------|--------|
-| `TUI_BIN_PATH` | Use this TUI binary instead of the installed one |
+| `TUI_BIN_PATH` | Use this TUI binary instead of the auto-detected one |
 | `TARVOS_JQ_PATH` | Use this jq binary instead of the bundled one |
 | `TARVOS_DATA_DIR` | Override the data directory (default: `~/.local/share/tarvos`) |
