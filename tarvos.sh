@@ -1147,6 +1147,10 @@ cmd_tui() {
         echo "Or for development: cd tui && bun run build:darwin-arm64" >&2
         exit 1
     fi
+    # Tell the TUI binary where tarvos.sh lives so it can invoke CLI
+    # commands.  In compiled Bun binaries import.meta.dir is "/" which
+    # breaks the relative path; this env var provides the real location.
+    export TARVOS_SCRIPT_DIR="$SCRIPT_DIR"
     exec "$_TUI_BIN"
 }
 

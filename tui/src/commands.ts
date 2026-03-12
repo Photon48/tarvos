@@ -1,6 +1,11 @@
 import { join } from "path"
 
-const TARVOS_SCRIPT = join(import.meta.dir, "../../tarvos.sh")
+// In compiled Bun binaries, import.meta.dir resolves to "/" (embedded VFS root),
+// so the relative path breaks.  tarvos.sh exports TARVOS_SCRIPT_DIR before
+// launching the TUI; fall back to import.meta.dir for dev mode (bun run).
+const TARVOS_SCRIPT = process.env.TARVOS_SCRIPT_DIR
+  ? join(process.env.TARVOS_SCRIPT_DIR, "tarvos.sh")
+  : join(import.meta.dir, "../../tarvos.sh")
 
 export async function runTarvosCommand(
   args: string[],
