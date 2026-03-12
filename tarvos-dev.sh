@@ -13,21 +13,34 @@
 # TUI auto-detection: if tui/dist/ contains a binary for the current platform,
 # it is used automatically — no TUI_BIN_PATH env var needed.
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve the real location of this script (follow symlinks)
+_DEV_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$_DEV_SOURCE" ]]; do
+    _DEV_SOURCE="$(readlink "$_DEV_SOURCE")"
+done
+REPO_DIR="$(cd "$(dirname "$_DEV_SOURCE")" && pwd)"
+unset _DEV_SOURCE
 
 # Make it obvious you are in dev mode, not hitting production
 echo "[tarvos-dev] repo: $REPO_DIR" >&2
 echo "[tarvos-dev] branch: $(git -C "$REPO_DIR" branch --show-current 2>/dev/null || echo 'unknown')" >&2
 
-# Auto-detect local TUI build for this platform and use it if present
+# Require a local TUI build — never fall back to production binary
+_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+_ARCH="$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')"
+_LOCAL_TUI="${REPO_DIR}/tui/dist/tui-${_OS}-${_ARCH}"
+
 if [[ -z "${TUI_BIN_PATH:-}" ]]; then
-    _OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    _ARCH="$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')"
-    _LOCAL_TUI="${REPO_DIR}/tui/dist/tui-${_OS}-${_ARCH}"
-    if [[ -x "$_LOCAL_TUI" ]]; then
-        export TUI_BIN_PATH="$_LOCAL_TUI"
-        echo "[tarvos-dev] TUI: local build (${_OS}-${_ARCH})" >&2
+    if [[ ! -x "$_LOCAL_TUI" ]]; then
+        echo "[tarvos-dev] ERROR: no local TUI binary found for ${_OS}-${_ARCH}" >&2
+        echo "[tarvos-dev] Build it first:" >&2
+        echo "  cd ${REPO_DIR}/tui && bun run build:${_OS}-${_ARCH}" >&2
+        echo "  # or to auto-rebuild on every save:" >&2
+        echo "  cd ${REPO_DIR}/tui && bun run watch" >&2
+        exit 1
     fi
+    export TUI_BIN_PATH="$_LOCAL_TUI"
+    echo "[tarvos-dev] TUI: local build (${_OS}-${_ARCH})" >&2
 fi
 
 exec bash "$REPO_DIR/tarvos.sh" "$@"

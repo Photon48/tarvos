@@ -289,7 +289,6 @@ EOF
 usage_root() {
     cat <<EOF
 Usage: tarvos <command> [options]
-       tarvos                          Open the session browser
 
 Tarvos runs your AI coding plan to completion. Write a plan, start a session,
 and let it work — each agent hands off to the next so nothing gets lost. When
@@ -2065,14 +2064,8 @@ run_agent_loop() {
 # ──────────────────────────────────────────────────────────────
 main() {
     if [[ $# -eq 0 ]]; then
-        # No arguments: launch the unified TUI session list
-        if [[ ! -x "$_TUI_BIN" ]]; then
-            echo "Error: TUI binary not found. Re-run the tarvos installer:" >&2
-            echo "  curl -fsSL https://raw.githubusercontent.com/${TARVOS_REPO}/main/install.sh | bash" >&2
-            echo "Or for development: cd tui && bun run build:darwin-arm64" >&2
-            exit 1
-        fi
-        exec "$_TUI_BIN"
+        usage_root
+        return 0
     fi
 
     local cmd="$1"
