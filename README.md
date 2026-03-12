@@ -18,7 +18,10 @@ Run multiple plans at once. Each session gets its own isolated git worktree. Whe
 ## Quickstart
 
 **Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI
+
 Tarvos currently only works with Claude Code. Others coming soon...
+
+One-line install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
