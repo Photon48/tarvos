@@ -606,8 +606,10 @@ _test_reject_force_noninteractive() {
     local workdir="${TMPDIR_ROOT}/t14"
     local sname="test-reject-t14"
 
-    # No mock_bin needed for init+reject — claude not invoked
-    _init_session_in_tmpdir "$workdir" "$sname" || return 1
+    # mock_bin needed so tarvos init can find the claude CLI dependency check
+    local mock_bin="${TMPDIR_ROOT}/mock-t14"
+    _make_mock_bin "$mock_bin"
+    _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
 
     # reject --force should exit 0 without any stdin interaction
     local output exit_code=0
@@ -628,8 +630,10 @@ _test_missing_worktree_aborts() {
     local workdir="${TMPDIR_ROOT}/t15"
     local sname="test-missing-wt-t15"
 
-    # No mock_bin needed — init only, claude not invoked for continue
-    _init_session_in_tmpdir "$workdir" "$sname" || return 1
+    # mock_bin needed so tarvos init can find the claude CLI dependency check
+    local mock_bin="${TMPDIR_ROOT}/mock-t15"
+    _make_mock_bin "$mock_bin"
+    _init_session_in_tmpdir "$workdir" "$sname" "$mock_bin" || return 1
 
     # Manually set state to "stopped" with a nonexistent worktree_path
     local state_file="${workdir}/.tarvos/sessions/${sname}/state.json"
