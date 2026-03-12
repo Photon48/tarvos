@@ -1,0 +1,18 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install TUI dependencies
+        run: cd tui && bun install
+      - name: TypeScript type-check
+        run: cd tui && bun x tsc --noEmit
+      - name: Run smoke tests
+        run: bash tests/smoke-test.sh

@@ -1,0 +1,50 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Run `tarvos init ...`
+        2. Run `tarvos begin ...`
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include any error output.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tarvos Version
+      placeholder: e.g. v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and Architecture
+      placeholder: e.g. macOS 14 arm64, Ubuntu 22.04 x86_64
+    validations:
+      required: true
