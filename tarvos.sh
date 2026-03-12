@@ -1677,7 +1677,7 @@ cmd_update() {
     local TARBALL_NAME="tarvos-${TARGET_VERSION}.tar.gz"
     echo -e "  Downloading ${DIM}${TARBALL_NAME}${RESET}..."
     local TARBALL_TMP
-    TARBALL_TMP="$(mktemp /tmp/tarvos-XXXXXX.tar.gz)"
+    TARBALL_TMP="$(mktemp "${TMPDIR:-/tmp}/tarvos-XXXXXX.tar.gz")"
     curl -fsSL "${GITHUB_RELEASES}/${TARBALL_NAME}" -o "$TARBALL_TMP"
     tar -xzf "$TARBALL_TMP" -C "$TARVOS_DATA_DIR" --strip-components=1
     rm -f "$TARBALL_TMP"
@@ -1800,14 +1800,14 @@ run_iteration() {
 
         if [[ $claude_exit -ne 0 ]]; then
             if [[ -s "$stderr_log" ]]; then
-                log_error "Claude exited with code ${claude_exit}: $(head -c 300 "$stderr_log" | tr '\n' ' ')"
+                log_error "Claude exited with code ${claude_exit}: $(head -c 300 "$stderr_log" | tr '\n' ' ' | sed "s|$HOME|~|g")"
             else
                 log_error "Claude exited with code ${claude_exit} (no stderr)"
             fi
         elif [[ ! -s "$text_output" ]]; then
             log_warning "Claude produced no text output (exit code 0)"
             if [[ -s "$stderr_log" ]]; then
-                log_warning "Stderr: $(head -c 300 "$stderr_log" | tr '\n' ' ')"
+                log_warning "Stderr: $(head -c 300 "$stderr_log" | tr '\n' ' ' | sed "s|$HOME|~|g")"
             fi
         fi
     fi

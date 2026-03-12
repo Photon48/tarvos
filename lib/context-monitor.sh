@@ -374,7 +374,7 @@ run_recovery_session() {
     # Report errors
     if [[ $exit_code -ne 0 ]]; then
         if [[ -s "$stderr_log" ]]; then
-            log_error "Recovery claude exit code ${exit_code}: $(head -c 300 "$stderr_log" | tr '\n' ' ')"
+            log_error "Recovery claude exit code ${exit_code}: $(head -c 300 "$stderr_log" | tr '\n' ' ' | sed "s|$HOME|~|g")"
         else
             log_error "Recovery claude exited with code ${exit_code}"
         fi

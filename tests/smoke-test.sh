@@ -140,7 +140,7 @@ _write_session() {
   "status": "${status}",
   "branch": "${branch}",
   "last_activity": "${last_activity}",
-  "prd_file": "/tmp/test.prd.md",
+  "prd_file": "${TMPDIR:-/tmp}/test.prd.md",
   "token_limit": 100000,
   "max_loops": 50,
   "worktree_path": ""
@@ -637,7 +637,7 @@ _test_missing_worktree_aborts() {
 
     # Manually set state to "stopped" with a nonexistent worktree_path
     local state_file="${workdir}/.tarvos/sessions/${sname}/state.json"
-    local nonexistent_path="/tmp/nonexistent-tarvos-wt-$$"
+    local nonexistent_path="${TMPDIR:-/tmp}/nonexistent-tarvos-wt-$$"
     local tmp="${state_file}.tmp"
     ${TARVOS_JQ:-jq} --arg v "$nonexistent_path" '.status = "stopped" | .worktree_path = $v' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 

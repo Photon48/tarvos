@@ -4,7 +4,7 @@
 
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
-Email: security@photon48.dev (or open a private GitHub security advisory)
+Email: rishu.goyal@outlook.com.au (or open a private GitHub security advisory)
 
 Include:
 - Description of the vulnerability

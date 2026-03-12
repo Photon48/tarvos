@@ -59,7 +59,7 @@ fi
 # ─── Download and extract tarvos release tarball ─────────────────────────────
 TARBALL_NAME="tarvos-${TARVOS_VERSION}.tar.gz"
 echo "Downloading ${TARBALL_NAME}..."
-TARBALL_TMP="$(mktemp /tmp/tarvos-XXXXXX.tar.gz)"
+TARBALL_TMP="$(mktemp "${TMPDIR:-/tmp}/tarvos-XXXXXX.tar.gz")"
 curl -fsSL "${GITHUB_RELEASES}/${TARBALL_NAME}" -o "$TARBALL_TMP"
 
 # Extract into data dir (tarvos.sh + lib/ + tarvos-skill/)

@@ -11,6 +11,9 @@ prds/
 tui/node_modules/
 tui/dist/
 
+# Environment files
+.env*
+
 # OS / editor
 .DS_Store
 *.log

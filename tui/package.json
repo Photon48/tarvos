@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Terminal UI for Tarvos agent orchestrator",
   "license": "MIT",
+  "author": "Rishu Goyal <rishu.goyal@outlook.com.au>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Photon48/tarvos.git",
+    "directory": "tui"
+  },
+  "homepage": "https://github.com/Photon48/tarvos",
+  "bugs": "https://github.com/Photon48/tarvos/issues",
   "private": true,
   "type": "module",
   "scripts": {
