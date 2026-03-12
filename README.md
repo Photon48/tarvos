@@ -3,238 +3,139 @@
 [![CI](https://github.com/Photon48/tarvos/actions/workflows/ci.yml/badge.svg)](https://github.com/Photon48/tarvos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> No more context rot for Claude Code.
+> Relay architecture for AI coding agents.
 
-LLMs degrade as context fills up. You've felt it — the agent starts strong on Phase 1, then gets fuzzy by Phase 4. Your AI is spending half its context window just remembering what it already did. So you manually copy the PRD into a fresh session and pick up where it left off. That's not an autonomous developer. That's babysitting.
+---
 
-**Tarvos** fixes it for Claude Code. It automatically spawns fresh agents from a progress handoff whenever context crosses 50%, keeping every phase at full quality. You write the plan once. Tarvos runs it to completion, unattended.
+## The Problem
 
-Run multiple plans at once. Each session gets its own isolated git worktree. When the work is done, accept it to merge, or reject it to discard — without ever touching git yourself.
+LLMs degrade as context fills up. This is measured, not anecdotal — model accuracy drops significantly as input length grows ([Chroma Research](https://research.trychroma.com/context-rot)). Every AI coding tool today runs a single agent from start to finish. By Phase 4 of your plan, half the context window is spent remembering what was already done. That is not autonomous development.
 
 [![Model performance vs input length](./hero_plot.png)](https://research.trychroma.com/context-rot)
 
 ---
 
+## See It Work
+
+```
+$ tarvos init prds/payments-v2.md --name payments
+  ✓ Plan loaded — 4 phases, ~2400 lines of work
+  ✓ Session created on branch tarvos/payments-a1b2c3
+
+$ tarvos begin payments
+
+  Agent 1  Phase 1: Project scaffolding .............. ✓  (3m, 42k tokens)
+           → wrote progress.md, handed off
+  Agent 2  Phase 2: Stripe API integration ........... ✓  (8m, 87k tokens)
+           → context budget hit at 87k, clean handoff
+  Agent 3  Phase 2: Stripe API integration (cont.) ... ✓  (6m, 61k tokens)
+           → wrote progress.md, handed off
+  Agent 4  Phase 3: Webhook handlers + idempotency ... ✓  (7m, 79k tokens)
+           → wrote progress.md, handed off
+  Agent 5  Phase 4: Tests + error handling ........... ✓  (5m, 53k tokens)
+           → ALL_PHASES_COMPLETE
+
+  Done. 5 agents, 4 phases, 29 minutes. Each agent ran at full capacity.
+
+$ tarvos accept payments
+  ✓ Merged tarvos/payments-a1b2c3 → main
+  ✓ Session archived
+```
+
+---
+
 ## Quickstart
 
-**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI
-
-Tarvos currently only works with Claude Code. Others coming soon...
-
-One-line install:
+**Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI. Tarvos currently implements Relay Architecture for Claude Code. Support for other agents is planned.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
 ```
 
-Then from your project:
+From your project:
 
 ```bash
 tarvos init my-plan.md --name my-feature
 tarvos begin my-feature
 tarvos tui
 ```
-![Bash Board](./bashboard.png)
+
+![Tarvos TUI](./bashboard.png)
+
+Use your AI coding tool's plan mode to write a phased development plan, save it to your project (e.g. `prds/my-feature.md`), and hand it to Tarvos. See [`example.prd.md`](./example.prd.md) for format reference.
 
 ---
 
-## Example: Building a feature end-to-end
+## Relay Architecture
 
-Use your AI coding tool's plan mode to design what you want to build. Once you're happy with the plan, ask it to save the file into your project:
+Relay Architecture replaces single-session execution with a relay of fresh agents. Each agent reads the full plan, picks up a minimal handoff from the previous agent, works at peak capacity, and passes the baton forward. The team covers a distance no single agent could sustain.
 
-> "Plan out a payments integration. Save it to `prds/payments-v1.md`."
+The architecture defines four components:
 
-Then hand it to Tarvos:
+- **The Master Plan** — A phased development plan (PRD) that serves as the shared contract. Every agent reads it fresh from disk. It never accumulates in context — it survives every handoff as a file.
 
-```bash
-tarvos init prds/payments-v1.md --name payments
-tarvos begin payments
-tarvos tui
-```
+- **The Baton** — A deliberately minimal handoff note (`progress.md`), capped at 40 lines. What was done, what to do next, what gotchas exist. The constraint is the design: less information transfers better. A bloated handoff recreates context rot in the next agent.
 
-Tarvos creates an isolated git branch, runs fresh agents phase by phase, and writes a progress handoff between each one. When it's done, accept or reject from the TUI — no git required.
+- **The Signals** — Agents self-report through three trigger phrases: `PHASE_COMPLETE` (phase done, tests pass, committed), `PHASE_IN_PROGRESS` (stopping mid-phase at a clean breakpoint), `ALL_PHASES_COMPLETE` (entire plan verified done). The orchestrator listens for signals — it does not need to understand the code.
 
-> **Tip:** Keep older PRDs in `prds/archive/` as a record of past work and past decisions.
+- **The Context Budget** — Token usage is tracked in real-time. When usage crosses the budget, the agent is stopped and a fresh one is spawned with a clean window and the baton. Agents also self-monitor: they prefer handing off cleanly over continuing into degraded output.
 
 ---
 
-## How it works
+## How Tarvos Implements It
 
-1. **Write a plan.** Use your AI coding tool's plan mode to describe what you want to build — phases, tasks, milestones. Ask it to save the plan into your project (e.g. `prds/my-feature.md`). Keep older plans in `prds/archive/` for reference. See [`example.prd.md`](./example.prd.md) for format inspiration.
+Tarvos is the reference implementation of Relay Architecture for Claude Code. It handles everything outside the agent's responsibility:
 
-2. **`tarvos init`** reads your plan, previews it, and creates a session — a named workspace with its own git branch and isolated working directory.
-
-3. **`tarvos begin`** starts the agent in the background. It works through your plan one phase at a time, each fresh agent picking up from a handoff note left by the previous one.
-
-4. **`tarvos tui`** opens the session browser where you can watch progress, view the activity log, and take action when work is done.
-
-5. When done, **`tarvos accept`** merges the changes into your branch and cleans up. **`tarvos reject`** discards everything cleanly if you don't like the result. **`tarvos forget`** removes the session from Tarvos while leaving the git branch untouched for you to handle manually.
+- **Git isolation** — Each session runs in its own git worktree. Multiple plans execute simultaneously without conflicts. Your working directory is never touched.
+- **Background execution** — Agent loops run detached. Use `tarvos tui` to monitor.
+- **Context monitoring** — Real-time token tracking via stream-json. Automatic handoff at budget threshold.
+- **Signal detection** — Output stream scanned for trigger phrases. Orchestrator dispatches accordingly.
+- **Recovery** — If an agent exits without writing `progress.md`, a recovery agent reconstructs the handoff from git history.
+- **Accept / Reject** — Merge changes into your branch or discard them. No manual git required.
 
 ---
 
 ## Commands
 
-### `tarvos tui`
+| Command | Description |
+|---|---|
+| `tarvos init <plan.md> --name <name>` | Create a session from a plan. Options: `--token-limit N` (default 100k), `--max-loops N` (default 50), `--no-preview`. |
+| `tarvos begin <name>` | Start the relay. Runs in background. |
+| `tarvos tui` | Open the interactive session browser. |
+| `tarvos stop <name>` | Stop a running session. |
+| `tarvos continue <name>` | Resume a stopped session. No progress lost. |
+| `tarvos accept <name>` | Merge completed session into your branch. Detects conflicts before merging. |
+| `tarvos reject <name>` | Discard a session. Deletes branch and data. `--force` to skip confirmation. |
+| `tarvos forget <name>` | Remove session from Tarvos, keep the git branch for manual handling. |
+| `tarvos update` | Update to latest release. `--version v0.x.y` for specific version. |
+| `tarvos migrate` | Upgrade from older config format. |
 
-Open the interactive session browser.
+---
+
+## Session Lifecycle
 
 ```
-╭── Sessions ──────────────────────────────── 3 sessions ───╮
-│                                                            │
-│ ▶  ⠋ my-feature     running      tarvos/my-feature-…  2m ago │
-│    ✓ bugfix-login   done         tarvos/bugfix-login-… 1h ago │
-│    ○ experiment     initialized  —                     —      │
-│                                                            │
-╰────────────────────────────────────────────────────────────╯
-[↑↓] Navigate  [Enter] Open/Actions  [n] New  [q] Quit
-```
-
-Keys: `↑`/`k` up, `↓`/`j` down, `Enter` open or actions menu, `n` new session, `R` refresh, `q` quit.
-
-Actions menu (context-aware per session status):
-- **running** → View, Stop
-- **stopped** → Continue, Reject
-- **done** → Accept, Reject, Forget, View Summary
-- **initialized** → Start, Reject
-- **failed** → Reject, Forget
-
-Use `tarvos tui view <session>` to open the run dashboard for a specific session directly.
-
----
-
-### `tarvos init <plan.md> --name <name> [options]`
-
-Read a plan file and create a named session.
-
-| Option | Default | Description |
-|---|---|---|
-| `--name <name>` | required | Session name (alphanumeric + hyphens) |
-| `--token-limit N` | `100000` | How much context an agent uses before handing off |
-| `--max-loops N` | `50` | Maximum number of agent iterations |
-| `--no-preview` | — | Skip the plan preview and create the session immediately |
-
----
-
-### `tarvos begin <name>`
-
-Start the agent loop for a session. Always runs in the background — use `tarvos tui` to monitor progress.
-
----
-
-### `tarvos continue <name>`
-
-Resume a stopped session from where it left off. No progress is lost.
-
----
-
-### `tarvos accept <name>`
-
-Merge a completed session's changes into your original branch and clean up. Session must have status `done`.
-
-The accepted session is archived to `.tarvos/archive/` — its metadata and logs are preserved there even after the branch is merged.
-
-If another plan was accepted first and modified the same files, Tarvos will detect the conflict and exit cleanly **before** attempting any merge. Your working tree is untouched. Follow the printed instructions to resolve the conflict manually.
-
----
-
-### `tarvos reject <name> [--force]`
-
-Discard a session — deletes the branch and all its data. Use `--force` to skip the confirmation prompt. When prompted, you must type the full word `yes` to confirm. Session must not be running.
-
----
-
-### `tarvos stop <name>`
-
-Stop a running session. Resume it later with `tarvos continue`.
-
----
-
-### `tarvos forget <name> [--force]`
-
-Remove a session from Tarvos without deleting its git branch. Use `--force` to skip the confirmation prompt.
-
-The session's worktree is removed (if present) and its Tarvos metadata is archived. The git branch is left exactly as-is — you can check it out, merge it manually, open a PR, or delete it yourself.
-
-Use this when you want to handle the branch outside of Tarvos: cherry-pick changes, resolve conflicts yourself, or merge via a pull request.
-
-> **Note:** Tarvos will no longer track this session after `forget`. The branch is yours to handle. You can find the archived session metadata in `.tarvos/archive/`.
-
-Session must have status `done` or `failed`. Use `tarvos stop` first if the session is still running.
-
----
-
-### `tarvos update [--version v0.x.y] [--force]`
-
-Download and install the latest Tarvos release (or a specific version). Replaces the TUI binary and `tarvos.sh` in place. Skips re-downloading jq unless `--force` is passed.
-
-```bash
-tarvos update               # latest release
-tarvos update --version v0.2.0
-```
-
----
-
-### `tarvos migrate`
-
-Upgrade a project from an older Tarvos configuration format. If you have a legacy `.tarvos/config` file from a previous Tarvos version, this command converts it to the current session format.
-
-```bash
-tarvos migrate
-```
-
----
-
-## Session lifecycle
-
-```
-init → begin → [running] → done ──→ accept  (changes merged, session archived)
-                         │        ↘ reject  (changes discarded)
-                         │        ↘ forget  (branch kept, session archived)
+init → begin → [running] → done ──→ accept  (merged, archived)
+                         │        ↘ reject  (discarded)
+                         │        ↘ forget  (branch kept, archived)
                          ↓
-                       failed ──→ reject  (discard branch)
-                               ↘ forget  (keep branch)
+                       failed ──→ reject / forget
                          ↓
-                       stopped → continue (resume)
-                               ↘ reject  (discard)
+                       stopped → continue / reject
 ```
 
-After a session reaches `done`, a summary is automatically generated and saved to `.tarvos/sessions/<name>/summary.md`. In the TUI run dashboard, the footer will briefly show "Generating summary…" and then update to `[s] View Summary` once it's ready. You can also access it from the session list actions overlay → "View Summary".
-
----
-
-## Where things live
-
-Everything is under `.tarvos/` in your project (automatically gitignored):
-
-- **`sessions/<name>/`** — session state, progress handoff notes, summary, logs
-- **`worktrees/<name>/`** — the isolated working directory for each session (removed on accept/reject/forget)
-- **`archive/<name>-<ts>/`** — archived session metadata after accept, reject, or forget
+Everything lives under `.tarvos/` in your project (gitignored): `sessions/` for state and logs, `worktrees/` for isolated working directories, `archive/` for completed sessions.
 
 ---
 
 ## Development
 
-See [DEVELOPER.md](DEVELOPER.md) for the full guide. Quick summary:
+See [DEVELOPER.md](DEVELOPER.md) for the full guide.
 
 ```bash
-git clone https://github.com/Photon48/tarvos.git
-cd tarvos
-
-# test shell changes immediately — no build needed
-tarvos-dev init my-plan.md --name test
-
-# build the TUI for your platform, then test
-cd tui && bun install && bun run build:darwin-arm64
-tarvos-dev tui
-
-# auto-rebuild TUI on every save
-cd tui && bun run watch
+git clone https://github.com/Photon48/tarvos.git && cd tarvos
+tarvos-dev init my-plan.md --name test    # test shell changes — no build needed
+cd tui && bun install && bun run build:darwin-arm64 && tarvos-dev tui   # build + test TUI
 ```
 
-`tarvos-dev` is completely separate from the installed `tarvos` — production is never touched.
-
-### Release process
-
-1. Tag a new version: `git tag v0.2.0 && git push --tags`
-2. GitHub Actions builds all platform binaries and creates the release
-3. Update `TARVOS_VERSION` in `install.sh` and commit
+`tarvos-dev` is completely separate from production `tarvos`.
