@@ -1,10 +1,10 @@
 # Tarvos
 
-> Run your AI coding plan to completion.
+> No More Context Rot.
 
-AI coding agents slow down as they go. The more context they accumulate, the worse their output gets — a well-known effect across every major model.
+LLMs degrade as context fills up. You've felt it — the agent starts strong on Phase 1, then gets fuzzy by Phase 4. Your AI is spending half its context window just remembering what it already did. So you manually copy the PRD into a fresh session and pick up where it left off. That's not an autonomous developer. That's babysitting.
 
-**Tarvos** solves this by running a chain of fresh agents on your plan, each one picking up exactly where the last left off. You write the plan once. Tarvos handles the rest.
+**Tarvos** fixes it. It automatically spawns fresh agents from a progress handoff whenever context crosses 50%, keeping every phase at full quality. You write the plan once. Tarvos runs it to completion, unattended.
 
 Run multiple plans at once. Each session gets its own isolated git worktree. When the work is done, accept it to merge, or reject it to discard — without ever touching git yourself.
 
@@ -30,9 +30,29 @@ tarvos tui
 
 ---
 
+## Example: Building a feature end-to-end
+
+Use your AI coding tool's plan mode to design what you want to build. Once you're happy with the plan, ask it to save the file into your project:
+
+> "Plan out a payments integration. Save it to `prds/payments-v1.md`."
+
+Then hand it to Tarvos:
+
+```bash
+tarvos init prds/payments-v1.md --name payments
+tarvos begin payments
+tarvos tui
+```
+
+Tarvos creates an isolated git branch, runs fresh agents phase by phase, and writes a progress handoff between each one. When it's done, accept or reject from the TUI — no git required.
+
+> **Tip:** Keep older PRDs in `prds/archive/` as a record of past work and past decisions.
+
+---
+
 ## How it works
 
-1. **Write a plan.** Describe what you want to build — phases, tasks, milestones. Any format works. See [`example.prd.md`](./example.prd.md) for inspiration.
+1. **Write a plan.** Use your AI coding tool's plan mode to describe what you want to build — phases, tasks, milestones. Ask it to save the plan into your project (e.g. `prds/my-feature.md`). Keep older plans in `prds/archive/` for reference. See [`example.prd.md`](./example.prd.md) for format inspiration.
 
 2. **`tarvos init`** reads your plan, previews it, and creates a session — a named workspace with its own git branch and isolated working directory.
 
