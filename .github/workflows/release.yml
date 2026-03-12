@@ -11,8 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - name: Install TUI dependencies
-        run: cd tui && bun install
+      - name: Install TUI dependencies (all platforms)
+        run: cd tui && bun install --os=* --cpu=*
       - name: Build all platform binaries
         run: cd tui && bun run build:all
       - name: Build release tarball
