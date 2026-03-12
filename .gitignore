@@ -4,6 +4,9 @@
 logs/
 progress.md
 
+# Internal planning documents (keep local, do not publish)
+prds/
+
 # Build artifacts
 tui/node_modules/
 tui/dist/

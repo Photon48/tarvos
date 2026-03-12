@@ -16,7 +16,7 @@
 ## Getting the Code
 
 ```bash
-git clone https://github.com/anomalyco/tarvos.git
+git clone https://github.com/Photon48/tarvos.git
 cd tarvos
 ```
 
@@ -71,7 +71,7 @@ Both runtimes share the same bundled `jq` and TUI binaries at `~/.local/share/ta
 ### Production install (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
 ```
 
 This downloads jq and the prebuilt TUI binary into `~/.local/share/tarvos/bin/`, extracts `tarvos.sh` + `lib/` there, and symlinks `tarvos` into `/usr/local/bin`.

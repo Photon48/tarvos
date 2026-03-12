@@ -26,6 +26,8 @@ unset _TARVOS_SOURCE
 # bun is NOT required at runtime. It is only needed to rebuild the TUI binary.
 # See tui/build.sh for development instructions.
 
+TARVOS_REPO="Photon48/tarvos"
+
 # ─── Bundled dependency resolution ───────────────────────────────────────────
 TARVOS_DATA_DIR="${TARVOS_DATA_DIR:-${HOME}/.local/share/tarvos}"
 
@@ -36,7 +38,7 @@ if [[ ! -x "$TARVOS_JQ" ]]; then
 fi
 if [[ -z "$TARVOS_JQ" ]]; then
     echo "Error: jq not found. Re-run the tarvos installer:" >&2
-    echo "  curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/${TARVOS_REPO}/main/install.sh | bash" >&2
     exit 1
 fi
 export TARVOS_JQ
@@ -1142,7 +1144,7 @@ cmd_tui() {
 
     if [[ ! -x "$_TUI_BIN" ]]; then
         echo "Error: TUI binary not found. Re-run the tarvos installer:" >&2
-        echo "  curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash" >&2
+        echo "  curl -fsSL https://raw.githubusercontent.com/${TARVOS_REPO}/main/install.sh | bash" >&2
         echo "Or for development: cd tui && bun run build:darwin-arm64" >&2
         exit 1
     fi
@@ -1608,7 +1610,7 @@ cmd_update() {
             exit 1
         fi
         local LATEST
-        LATEST="$(curl -fsSL "https://api.github.com/repos/anomalyco/tarvos/releases/latest" \
+        LATEST="$(curl -fsSL "https://api.github.com/repos/${TARVOS_REPO}/releases/latest" \
             | "$TARVOS_JQ" -r '.tag_name' 2>/dev/null || true)"
         if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
             echo "Error: Could not determine the latest Tarvos release." >&2
@@ -1637,7 +1639,7 @@ cmd_update() {
 
     local TARVOS_BIN_DIR="${TARVOS_DATA_DIR}/bin"
     mkdir -p "$TARVOS_BIN_DIR"
-    local GITHUB_RELEASES="https://github.com/anomalyco/tarvos/releases/download/${TARGET_VERSION}"
+    local GITHUB_RELEASES="https://github.com/${TARVOS_REPO}/releases/download/${TARGET_VERSION}"
 
     # ── Re-download jq only when --force or not present ───────────────────────
     local JQ_BIN="${TARVOS_BIN_DIR}/jq"
@@ -2066,7 +2068,7 @@ main() {
         # No arguments: launch the unified TUI session list
         if [[ ! -x "$_TUI_BIN" ]]; then
             echo "Error: TUI binary not found. Re-run the tarvos installer:" >&2
-            echo "  curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash" >&2
+            echo "  curl -fsSL https://raw.githubusercontent.com/${TARVOS_REPO}/main/install.sh | bash" >&2
             echo "Or for development: cd tui && bun run build:darwin-arm64" >&2
             exit 1
         fi

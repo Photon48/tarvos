@@ -182,7 +182,7 @@ _test_tui_source_files_exist() {
 # Test 2: TypeScript TUI type-checks cleanly (bun --check)
 _test_tui_typecheck() {
     local bun_bin
-    bun_bin=$(command -v bun 2>/dev/null || echo "/Users/rishugoyal/.bun/bin/bun")
+    bun_bin=$(command -v bun 2>/dev/null || true)
     if [[ ! -x "$bun_bin" ]]; then
         echo "bun not found — skipping typecheck (install bun to enable)"
         return 0

@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # install.sh — standalone Tarvos installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
+
+TARVOS_REPO="Photon48/tarvos"
 
 # ─── Pinned versions (updated by CI on each release) ─────────────────────────
 TARVOS_VERSION="v0.1.0"
@@ -25,7 +27,7 @@ TARVOS_DATA_DIR="${TARVOS_DATA_DIR:-${HOME}/.local/share/tarvos}"
 TARVOS_BIN_DIR="${TARVOS_DATA_DIR}/bin"
 mkdir -p "$TARVOS_BIN_DIR"
 
-GITHUB_RELEASES="https://github.com/anomalyco/tarvos/releases/download/${TARVOS_VERSION}"
+GITHUB_RELEASES="https://github.com/${TARVOS_REPO}/releases/download/${TARVOS_VERSION}"
 
 echo "Installing Tarvos ${TARVOS_VERSION} (${TUI_PLATFORM})..."
 

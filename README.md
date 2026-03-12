@@ -17,7 +17,7 @@ Run multiple plans at once. Each session gets its own isolated git worktree. Whe
 **Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anomalyco/tarvos/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
 ```
 
 Then from your project:
