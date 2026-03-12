@@ -504,7 +504,7 @@ function ActionOverlay({
               <text fg={i === selectedAction ? theme.normal : theme.subtle}>
                 {i === selectedAction ? "▶ " : "  "}{action.label}
                 {action.description && i === selectedAction
-                  ? <text fg={theme.muted}>{"  "}{action.description}</text>
+                  ? <span fg={theme.muted}>{"  "}{action.description}</span>
                   : null}
               </text>
             </box>
