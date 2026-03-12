@@ -10,13 +10,24 @@
 # To put it on PATH permanently:
 #   ln -sf "$PWD/tarvos-dev.sh" ~/bin/tarvos-dev
 #
-# To test a local TUI build at the same time:
-#   TUI_BIN_PATH="$PWD/tui/dist/tui-darwin-arm64" ./tarvos-dev.sh tui
+# TUI auto-detection: if tui/dist/ contains a binary for the current platform,
+# it is used automatically — no TUI_BIN_PATH env var needed.
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Make it obvious you are in dev mode, not hitting production
 echo "[tarvos-dev] repo: $REPO_DIR" >&2
 echo "[tarvos-dev] branch: $(git -C "$REPO_DIR" branch --show-current 2>/dev/null || echo 'unknown')" >&2
+
+# Auto-detect local TUI build for this platform and use it if present
+if [[ -z "${TUI_BIN_PATH:-}" ]]; then
+    _OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    _ARCH="$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')"
+    _LOCAL_TUI="${REPO_DIR}/tui/dist/tui-${_OS}-${_ARCH}"
+    if [[ -x "$_LOCAL_TUI" ]]; then
+        export TUI_BIN_PATH="$_LOCAL_TUI"
+        echo "[tarvos-dev] TUI: local build (${_OS}-${_ARCH})" >&2
+    fi
+fi
 
 exec bash "$REPO_DIR/tarvos.sh" "$@"

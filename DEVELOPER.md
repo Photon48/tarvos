@@ -142,20 +142,44 @@ bun run build:all             # all platforms
 
 Output lands in `tui/dist/`.
 
-### Test your local TUI build without reinstalling
+### Auto-rebuild on file changes
 
-Use `tarvos-dev.sh` with the `TUI_BIN_PATH` override:
+While iterating on the TUI, run the watch script in a separate terminal. It rebuilds the binary automatically whenever any source file changes:
 
 ```bash
-TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" ./tarvos-dev.sh tui
+cd tui && bun run watch
 ```
 
-This keeps production's TUI untouched while you iterate on yours.
+Once a binary exists in `tui/dist/`, `tarvos-dev` picks it up automatically — no env var needed. You'll see this in the banner:
 
-`tarvos.sh` resolves the TUI binary in this order:
-1. `$TUI_BIN_PATH` env var (dev override)
-2. `~/.local/share/tarvos/bin/tui` (installed release binary)
-3. `tui/dist/tui-<os>-<arch>` relative to the script (automatic dev fallback if neither above exists)
+```
+[tarvos-dev] TUI: local build (darwin-arm64)
+```
+
+If `tui/dist/` has no binary for your platform, `tarvos-dev` falls back to the production binary silently.
+
+### Test your local TUI build without reinstalling
+
+`tarvos-dev` auto-detects a local build in `tui/dist/` for your platform. Just build once (or run `watch`) and then use `tarvos-dev` normally — no extra env vars required:
+
+```bash
+# terminal 1 — rebuild on every save
+cd tui && bun run watch
+
+# terminal 2 — test from any project
+tarvos-dev tui
+```
+
+To force a specific binary path, `TUI_BIN_PATH` still works as an explicit override:
+
+```bash
+TUI_BIN_PATH="$(pwd)/tui/dist/tui-darwin-arm64" tarvos-dev tui
+```
+
+`tarvos-dev` resolves the TUI binary in this order:
+1. `$TUI_BIN_PATH` env var (explicit override)
+2. `tui/dist/tui-<os>-<arch>` in the repo (auto-detected local build)
+3. `~/.local/share/tarvos/bin/tui` (production binary fallback)
 
 ---
 
