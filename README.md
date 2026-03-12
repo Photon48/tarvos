@@ -3,11 +3,11 @@
 [![CI](https://github.com/Photon48/tarvos/actions/workflows/ci.yml/badge.svg)](https://github.com/Photon48/tarvos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> No More Context Rot.
+> No more context rot for Claude Code.
 
 LLMs degrade as context fills up. You've felt it — the agent starts strong on Phase 1, then gets fuzzy by Phase 4. Your AI is spending half its context window just remembering what it already did. So you manually copy the PRD into a fresh session and pick up where it left off. That's not an autonomous developer. That's babysitting.
 
-**Tarvos** fixes it. It automatically spawns fresh agents from a progress handoff whenever context crosses 50%, keeping every phase at full quality. You write the plan once. Tarvos runs it to completion, unattended.
+**Tarvos** fixes it for Claude Code. It automatically spawns fresh agents from a progress handoff whenever context crosses 50%, keeping every phase at full quality. You write the plan once. Tarvos runs it to completion, unattended.
 
 Run multiple plans at once. Each session gets its own isolated git worktree. When the work is done, accept it to merge, or reject it to discard — without ever touching git yourself.
 
@@ -18,6 +18,7 @@ Run multiple plans at once. Each session gets its own isolated git worktree. Whe
 ## Quickstart
 
 **Prerequisites:** [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI
+Tarvos currently only works with Claude Code. Others coming soon...
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Photon48/tarvos/main/install.sh | bash
@@ -30,6 +31,7 @@ tarvos init my-plan.md --name my-feature
 tarvos begin my-feature
 tarvos tui
 ```
+![Bash Board](./bashboard.png)
 
 ---
 
