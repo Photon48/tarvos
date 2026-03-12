@@ -1,5 +1,8 @@
 # Tarvos
 
+[![CI](https://github.com/Photon48/tarvos/actions/workflows/ci.yml/badge.svg)](https://github.com/Photon48/tarvos/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > No More Context Rot.
 
 LLMs degrade as context fills up. You've felt it — the agent starts strong on Phase 1, then gets fuzzy by Phase 4. Your AI is spending half its context window just remembering what it already did. So you manually copy the PRD into a fresh session and pick up where it left off. That's not an autonomous developer. That's babysitting.
