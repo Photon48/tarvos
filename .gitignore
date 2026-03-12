@@ -1,4 +1,17 @@
 
+# Runtime / session data
 .tarvos/
+logs/
+progress.md
+
+# Build artifacts
 tui/node_modules/
 tui/dist/
+
+# OS / editor
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp
+*~
