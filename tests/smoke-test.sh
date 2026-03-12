@@ -643,7 +643,7 @@ _test_missing_worktree_aborts() {
 
     # tarvos continue should fail with "does not exist"
     local combined exit_code=0
-    combined=$(cd "$workdir" && bash "${PROJECT_ROOT}/tarvos.sh" continue "$sname" 2>&1 </dev/null) || exit_code=$?
+    combined=$(cd "$workdir" && PATH="${mock_bin}:${PATH}" bash "${PROJECT_ROOT}/tarvos.sh" continue "$sname" 2>&1 </dev/null) || exit_code=$?
 
     [[ "$exit_code" -ne 0 ]] || { echo "continue on missing worktree should exit non-zero; got 0: $combined"; return 1; }
     echo "$combined" | grep -qi "does not exist" || { echo "Should mention 'does not exist': $combined"; return 1; }
