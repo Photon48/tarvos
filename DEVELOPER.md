@@ -55,10 +55,23 @@ Each invocation prints a small banner to stderr so it is always obvious which ru
 If you want to type `tarvos-dev` instead of `./tarvos-dev.sh` from any directory:
 
 ```bash
+mkdir -p ~/bin
 ln -sf "$PWD/tarvos-dev.sh" ~/bin/tarvos-dev
-# ensure ~/bin is on PATH (add to ~/.zshrc if needed):
-# export PATH="$HOME/bin:$PATH"
 ```
+
+Then add `~/bin` to your PATH. Add this line to `~/.bashrc` (bash) or `~/.zshrc` (zsh):
+
+```bash
+export PATH="$HOME/bin:$PATH"
+```
+
+Reload your shell:
+
+```bash
+source ~/.bashrc   # or source ~/.zshrc
+```
+
+> **macOS note:** On macOS, interactive bash sessions load `~/.bash_profile` instead of `~/.bashrc`. If your `.bash_profile` doesn't already source `.bashrc`, add the export there instead.
 
 The symlink is to the absolute path of the script, so it continues to point at your repo regardless of where you call it from.
 
