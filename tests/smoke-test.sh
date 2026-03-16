@@ -580,6 +580,10 @@ _init_session_in_tmpdir() {
 
     [[ "$exit_code" -eq 0 ]] || { echo "tarvos init failed (exit ${exit_code}): $output"; return 1; }
     [[ -f "${workdir}/.tarvos/sessions/${session_name}/state.json" ]] || { echo "state.json not created after init"; return 1; }
+
+    # tarvos init now stages .gitignore — commit it so branch_ensure_clean
+    # doesn't block subsequent tarvos begin calls (mirrors the required user workflow).
+    git -C "$workdir" commit -m "chore: add .tarvos/ to .gitignore" -q 2>/dev/null || true
     return 0
 }
 
