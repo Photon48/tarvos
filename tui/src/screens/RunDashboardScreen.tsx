@@ -607,7 +607,7 @@ function RunFooter({ statusMessage, statusIsError, runStatus, summaryGenerating,
         <text fg={theme.muted}>[r] Reject  [f] Forget  [q] Back</text>
       ) : (
         <text fg={theme.muted}>
-          [↑↓] Scroll  [v] Toggle raw  {isRunning ? "[s] Stop  " : ""}{isStopped ? "[c] Continue  " : ""}[q] Back
+          [↑↓] Scroll  [v] Toggle raw  {isRunning ? "[s] Stop  " : ""}{isStopped ? "[c] Continue  [f] Forget  " : ""}[q] Back
         </text>
       )}
     </box>
@@ -905,8 +905,8 @@ export function RunDashboardScreen({ sessionName, onBack, onViewSummary }: RunDa
       }
       return
     }
-    // Forget keybind — double-press confirm, only when DONE or ERROR/FAILED
-    if (key.name === "f" && (runState.status === "DONE" || runState.status === "ERROR")) {
+    // Forget keybind — double-press confirm, only when DONE, ERROR/FAILED, or STOPPED
+    if (key.name === "f" && (runState.status === "DONE" || runState.status === "ERROR" || (runState.status as string) === "STOPPED")) {
       if (forgetPending) {
         // Second press: execute forget
         if (forgetTimeoutRef.current) clearTimeout(forgetTimeoutRef.current)

@@ -391,14 +391,25 @@ EOF
     fi
 
     # Scenario B: Git repo exists — ensure .tarvos/ is in .gitignore
+    local _gitignore_changed=0
     if [[ ! -f ".gitignore" ]]; then
         printf '.tarvos/\n' > ".gitignore"
         echo "  ✓ Created .gitignore with .tarvos/"
+        _gitignore_changed=1
     elif ! grep -qxF '.tarvos/' ".gitignore" 2>/dev/null; then
         printf '\n.tarvos/\n' >> ".gitignore"
         echo "  ✓ Added .tarvos/ to .gitignore"
+        _gitignore_changed=1
     fi
     # (If .gitignore already has .tarvos/ — do nothing, idempotent)
+    if (( _gitignore_changed )); then
+        git add .gitignore 2>/dev/null || true
+        echo ""
+        echo "  ⚠  .gitignore staged (not yet committed)."
+        echo "     Run: git commit -m 'chore: add .tarvos/ to .gitignore'"
+        echo "     Then run: tarvos begin <session-name>"
+        echo "     (branch_ensure_clean will block begin if .gitignore is uncommitted)"
+    fi
     # ────────────────────────────────────────────────────────────
 
     # Validate dependencies
@@ -1425,10 +1436,10 @@ cmd_forget() {
         exit 1
     fi
 
-    # Only allowed for done or failed
-    if [[ "$SESSION_STATUS" != "done" && "$SESSION_STATUS" != "failed" ]]; then
+    # Only allowed for done, failed, or stopped
+    if [[ "$SESSION_STATUS" != "done" && "$SESSION_STATUS" != "failed" && "$SESSION_STATUS" != "stopped" ]]; then
         echo "tarvos forget: session '${session_name}' has status '${SESSION_STATUS}'." >&2
-        echo "  forget is only available for done or failed sessions." >&2
+        echo "  forget is only available for done, failed, or stopped sessions." >&2
         exit 1
     fi
 

@@ -26,7 +26,7 @@ generate_summary() {
     local log_dir="$4"
     local worktree_path="$5"   # NEW: worktree dir to run --continue from
 
-    local session_dir=".tarvos/sessions/${session_name}"
+    local session_dir="${SESSIONS_DIR:-${TARVOS_PROJECT_ROOT:-.}/.tarvos/sessions}/${session_name}"
     local summary_file="${session_dir}/summary.md"
     local dashboard_log="${log_dir}/dashboard.log"
 
@@ -76,11 +76,26 @@ PROMPT
             2>/dev/null
     ); then
         echo "generate_summary: claude --continue invocation failed for session '${session_name}'" >&2
+        echo "# Summary Unavailable
+
+Summary generation failed for session \`${session_name}\`.
+
+**Why this happens:** \`claude --continue\` could not resume the session.
+You can manually review:
+- PRD: \`${prd_file}\`
+- Progress: \`${progress_file}\`" > "$summary_file"
         return 1
     fi
 
     if [[ -z "$summary_output" ]]; then
         echo "generate_summary: claude returned empty output" >&2
+        echo "# Summary Unavailable
+
+Summary generation returned empty output for session \`${session_name}\`.
+
+You can manually review:
+- PRD: \`${prd_file}\`
+- Progress: \`${progress_file}\`" > "$summary_file"
         return 1
     fi
 

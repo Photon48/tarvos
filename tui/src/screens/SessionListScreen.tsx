@@ -13,7 +13,8 @@ const ACTIONS: Record<string, Array<{ label: string; description?: string; cmd: 
   running:     [{ label: "View",     cmd: ["view"] },                    // client-side navigation only
                 { label: "Stop",     cmd: ["stop"] }],                   // tarvos stop <name>
   stopped:     [{ label: "Continue", cmd: ["continue", "--detach"] },    // tarvos continue --detach <name>
-                { label: "Reject",   cmd: ["reject", "--force"] }],
+                { label: "Reject",   cmd: ["reject", "--force"] },
+                { label: "Forget",   cmd: ["forget", "--force"], description: "Remove from Tarvos. Branch stays in your repo." }],
   done:        [{ label: "Accept",       cmd: ["accept"] },
                 { label: "Reject",       cmd: ["reject", "--force"] },
                 { label: "Forget",       cmd: ["forget", "--force"], description: "Remove from Tarvos. Branch stays in your repo." },
@@ -855,7 +856,7 @@ export function SessionListScreen({ onNavigate, onViewSummary }: SessionListScre
       setShowRejectConfirmQuick(true)
       return
     }
-    if (key.name === "f" && (session.status === "done" || session.status === "failed")) {
+    if (key.name === "f" && (session.status === "done" || session.status === "failed" || session.status === "stopped")) {
       setShowForgetConfirmQuick(true)
       return
     }
